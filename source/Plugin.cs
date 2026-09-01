@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
@@ -7,7 +8,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using BepInEx;
 using BepInEx.Configuration;
+#if PATHOFIDLE_DIAGNOSTICS
 using BepInEx.Logging;
+#endif
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Attributes;
@@ -22,9 +25,11 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "local.pathofidle.ingame-search";
     public const string PluginName = "Path of Idle In-Game Search";
-    public const string PluginVersion = "1.1.3";
+    public const string PluginVersion = "1.1.4";
 
-    internal static ManualLogSource Logger { get; private set; } = null!;
+#if PATHOFIDLE_DIAGNOSTICS
+    private static ManualLogSource DiagnosticsLogger { get; set; } = null!;
+#endif
     internal static ConfigEntry<string> SavedQuery { get; private set; } = null!;
     internal static ConfigEntry<bool> IncludeWarehouse { get; private set; } = null!;
     internal static ConfigEntry<float> WindowX { get; private set; } = null!;
@@ -46,13 +51,15 @@ public sealed class Plugin : BasePlugin
 
     public override void Load()
     {
-        Logger = Log;
+#if PATHOFIDLE_DIAGNOSTICS
+        DiagnosticsLogger = Log;
+#endif
         SavedQuery = Config.Bind("Search", "LastQuery", string.Empty, "Last in-game item search query.");
         IncludeWarehouse = Config.Bind("Search", "IncludeWarehouse", true, "Include warehouse and vault items.");
         WindowX = Config.Bind("Window", "X", 48f, "Search panel X position.");
         WindowY = Config.Bind("Window", "Y", 72f, "Search panel Y position.");
         OpenOnStart = Config.Bind("Window", "OpenOnStart", false, "Open the search panel when the game starts.");
-        GameSpeed = Config.Bind("Speed", "Multiplier", 1f, "Runtime speed: 0.5 through 100.");
+        GameSpeed = Config.Bind("Speed", "Multiplier", 1f, "Runtime speed: 0.1 through 100.");
         SkipBulkConfirmation = Config.Bind("BulkOpen", "SkipConfirmation", false, "Open all boxes immediately without a second confirmation click.");
         AutoStoreOpenedEquipment = Config.Bind("BulkOpen", "AutoStoreEquipment", true, "Move equipment received from bulk-opened boxes through the game's automatic warehouse routing.");
         BulkQualityMask = Config.Bind("BulkOpen", "QualityMask", 0, "Bit mask of box and rune-box qualities. Zero means all.");
@@ -63,11 +70,38 @@ public sealed class Plugin : BasePlugin
         UiLanguage = Config.Bind("Window", "Language", "auto", "UI language: auto, ko, en, zh-cn, or zh-tw.");
         AutoBuildIncludeStorage = Config.Bind("AutoBuild", "IncludeStorage", true, "Allow automatic gear selection to use warehouse and Vault equipment.");
         AutoBuildTheme = Config.Bind("AutoBuild", "Theme", "auto", "Build theme used by automatic gear and skill optimization.");
-        AutoTransformSkills = Config.Bind("AutoBuild", "TransformMissingSkills", true, "Use the shrine's normal paid skill transformation to seek missing recommended skills before allocating points.");
+        AutoTransformSkills = Config.Bind("AutoBuild", "TransformMissingSkills", true, "Use the shrine's normal paid skill transformation to seek missing performance-plan skills before allocating points.");
         AutoTransformMaxAttempts = Config.Bind("AutoBuild", "MaxSkillTransformAttempts", 12, "Maximum paid skill transformations per automatic skill run.");
         InstallWheelPatch();
         AddComponent<InGameSearchOverlay>();
-        Log.LogInfo($"{PluginName} {PluginVersion} loaded. Press F3 or Ctrl+F to open it.");
+        DiagInfo($"{PluginName} {PluginVersion} loaded. Press F3 or Ctrl+F to open it.");
+    }
+
+    // Diagnostic calls are removed completely from public builds, including
+    // argument evaluation and interpolated-string construction. Developers can
+    // opt in locally by defining PATHOFIDLE_DIAGNOSTICS at compile time.
+    [Conditional("PATHOFIDLE_DIAGNOSTICS")]
+    internal static void DiagInfo(string message)
+    {
+#if PATHOFIDLE_DIAGNOSTICS
+        DiagnosticsLogger.LogInfo(message);
+#endif
+    }
+
+    [Conditional("PATHOFIDLE_DIAGNOSTICS")]
+    internal static void DiagWarning(string message)
+    {
+#if PATHOFIDLE_DIAGNOSTICS
+        DiagnosticsLogger.LogWarning(message);
+#endif
+    }
+
+    [Conditional("PATHOFIDLE_DIAGNOSTICS")]
+    internal static void DiagDebug(string message)
+    {
+#if PATHOFIDLE_DIAGNOSTICS
+        DiagnosticsLogger.LogDebug(message);
+#endif
     }
 
     private static void InstallWheelPatch()
@@ -98,11 +132,11 @@ public sealed class Plugin : BasePlugin
             if (scrollGetter is not null && scrollPrefix is not null)
                 harmony.Patch(scrollGetter, prefix: new HarmonyMethod(scrollPrefix));
 
-            Logger.LogInfo("Focused overlay mouse-wheel input guard installed.");
+            DiagInfo("Focused overlay mouse-wheel input guard installed.");
         }
         catch (Exception error)
         {
-            Logger.LogWarning($"Mouse-wheel input guard unavailable: {error.Message}");
+            DiagWarning($"Mouse-wheel input guard unavailable: {error.Message}");
         }
     }
 }
@@ -124,7 +158,7 @@ internal static class WheelInputPatch
         if (!blockReported)
         {
             blockReported = true;
-            Plugin.Logger.LogInfo("Character wheel selection blocked while the pointer is over the focused overlay.");
+            Plugin.DiagInfo("Character wheel selection blocked while the pointer is over the focused overlay.");
         }
         return false;
     }
@@ -212,7 +246,6 @@ public sealed class InGameSearchOverlay : MonoBehaviour
 {
     private const float WindowWidth = 720f;
     private const float WindowHeight = 780f;
-    private const int ResultsPerPage = 6;
     private static readonly float[] SpeedSteps = { 0.5f, 1f, 2f, 3f, 5f, 10f, 20f, 50f, 100f };
     private readonly List<ItemSearchRecord> allItems = new();
     private readonly List<ItemSearchRecord> matches = new();
@@ -239,15 +272,20 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     private float transferCooldownUntil;
     private BulkToolKind armedBulkOpen;
     private float bulkConfirmUntil;
+    private BulkOpenSession? bulkSession;
     private AutoBuildAction armedAutoBuild;
     private float autoBuildConfirmUntil;
     private int equipmentBoxCount;
     private int runeBoxCount;
+    private bool bulkCountsAvailable = true;
+    private bool bulkCountFailedLastRefresh;
     private IMECompositionMode previousImeMode;
     private bool imeModeSaved;
     private GameObject? inputBlockerCanvasObject;
     private GameObject? inputBlockerRegionObject;
     private RectTransform? inputBlockerRect;
+    private GameObject? inputBlockerTooltipObject;
+    private RectTransform? inputBlockerTooltipRect;
     private bool keyboardBlockCaptured;
     private bool previousGameKeyboardBlocked;
     private bool navigationBlockCaptured;
@@ -255,6 +293,11 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     private bool keyboardReleasePending;
     private bool keyboardBlockUnavailableLogged;
     private bool overlayInputFocused;
+    private Rect activeTooltipRect;
+    private Rect tooltipAnchorRect;
+    private readonly List<Rect> visibleTransferRects = new();
+    private Vector2 tooltipScroll;
+    private string tooltipItemKey = string.Empty;
     private string selectedHeroSummary = string.Empty;
     private string selectedHeroProfile = string.Empty;
 
@@ -300,11 +343,12 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         UpdateUiLanguage();
         status = UiText.L("게임에 접속한 뒤 F3을 누르세요.", "Enter the game, then press F3.");
         windowRect = new Rect(Plugin.WindowX.Value, Plugin.WindowY.Value, WindowWidth, WindowHeight);
-        currentSpeed = Mathf.Clamp(Plugin.GameSpeed.Value, 0.1f, 100f);
+        var configuredSpeed = Plugin.GameSpeed.Value;
+        currentSpeed = float.IsFinite(configuredSpeed) ? Mathf.Clamp(configuredSpeed, 0.1f, 100f) : 1f;
         speedInput = currentSpeed.ToString("0.##", CultureInfo.InvariantCulture);
         ApplyGameSpeed();
         ClampWindowToScreen();
-        Plugin.Logger.LogInfo("In-game search overlay started.");
+        Plugin.DiagInfo("In-game search overlay started.");
         if (Plugin.OpenOnStart.Value) SetVisible(true);
     }
 
@@ -314,7 +358,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         var controlDown = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
         if (Input.GetKeyDown(KeyCode.F3) || (controlDown && Input.GetKeyDown(KeyCode.F)))
         {
-            Plugin.Logger.LogInfo("Search hotkey received.");
+            Plugin.DiagInfo("Search hotkey received.");
             SetVisible(!visible);
             return;
         }
@@ -336,10 +380,14 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             SetVisible(false);
             return;
         }
+        if (bulkSession is not null) AdvanceBulkOpenSession();
 
         if (Time.unscaledTime >= nextRefreshAt)
         {
-            nextRefreshAt = Time.unscaledTime + 1f;
+            // Full inventory/vault discovery uses game reflection and can be fairly
+            // expensive on large saves. Transfers and user actions already refresh
+            // immediately, so a slower idle poll avoids needless frame-time spikes.
+            nextRefreshAt = Time.unscaledTime + 3f;
             RefreshCurrentPage(resetStatus: false);
         }
     }
@@ -350,7 +398,8 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         var focusEvent = Event.current;
         if (focusEvent is not null && focusEvent.type == EventType.MouseDown)
         {
-            overlayInputFocused = windowRect.Contains(focusEvent.mousePosition);
+            overlayInputFocused = windowRect.Contains(focusEvent.mousePosition)
+                                  || activeTooltipRect.Contains(focusEvent.mousePosition);
             if (!overlayInputFocused)
             {
                 focusSearch = false;
@@ -359,8 +408,26 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         }
         EnsureStyles();
         ClampWindowToScreen();
-        HandleWindowDrag();
-        hoveredItem = null;
+        var pointerOverTransfer = visibleTransferRects.Any(rect => rect.Contains(Event.current.mousePosition));
+        var tooltipOwnsPointer = !pointerOverTransfer && hoveredItem is not null && activeTooltipRect.Contains(Event.current.mousePosition);
+        if (pointerOverTransfer)
+        {
+            hoveredItem = null;
+            tooltipItemKey = string.Empty;
+            activeTooltipRect = default;
+        }
+        visibleTransferRects.Clear();
+        if (!tooltipOwnsPointer) HandleWindowDrag();
+        var keepTooltipOpen = tooltipOwnsPointer;
+        if (!keepTooltipOpen) hoveredItem = null;
+        activeTooltipRect = default;
+        UpdateInputBlocker();
+
+        // The tooltip is drawn after the main panel. Disable every underlying
+        // IMGUI control while the pointer is inside its previous-frame bounds;
+        // otherwise an opaque tooltip can still click hidden tabs/filters/drag.
+        var mainPanelEnabled = GUI.enabled;
+        if (tooltipOwnsPointer) GUI.enabled = false;
 
         GUI.depth = -10000;
         var windowBackground = GUI.backgroundColor;
@@ -380,7 +447,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (GUI.Button(new Rect(windowRect.xMax - 368f, windowRect.y + 11f, 62f, 29f), LanguageButtonLabel(), compactButtonStyle!)) CycleUiLanguage();
         if (GUI.Button(new Rect(windowRect.xMax - 300f, windowRect.y + 11f, 32f, 29f), "−", buttonStyle!)) ChangeGameSpeed(-1);
         var speedRect = new Rect(windowRect.xMax - 262f, windowRect.y + 11f, 62f, 29f);
-        HandleSpeedInput(speedRect);
+        if (!tooltipOwnsPointer) HandleSpeedInput(speedRect);
         GUI.Box(speedRect, GUIContent.none, searchStyle!);
         GUI.Label(new Rect(speedRect.x + 5f, speedRect.y + 4f, speedRect.width - 10f, 22f), speedInput + (focusSpeedInput ? "|" : string.Empty) + "×", badgeStyle!);
         if (GUI.Button(new Rect(windowRect.xMax - 194f, windowRect.y + 11f, 32f, 29f), "+", buttonStyle!)) ChangeGameSpeed(1);
@@ -396,7 +463,8 @@ public sealed class InGameSearchOverlay : MonoBehaviour
 
         if (selectedPage == OverlayPage.BulkOpen)
         {
-            DrawBulkOpenPanel(new Rect(left, windowRect.y + 78f, width, 360f));
+            DrawBulkOpenPanel(new Rect(left, windowRect.y + 78f, width, 400f));
+            GUI.enabled = mainPanelEnabled;
             ConsumeRemainingKeyboardEvent();
             return;
         }
@@ -404,12 +472,13 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (selectedPage == OverlayPage.AutoBuild)
         {
             DrawAutoBuildPanel(new Rect(left, windowRect.y + 78f, width, 610f));
+            GUI.enabled = mainPanelEnabled;
             ConsumeRemainingKeyboardEvent();
             return;
         }
 
         var searchRect = new Rect(left, windowRect.y + 70f, width, 38f);
-        HandleSearchInput(searchRect);
+        if (!tooltipOwnsPointer) HandleSearchInput(searchRect);
         GUI.Box(searchRect, GUIContent.none, searchStyle!);
         var composition = Input.compositionString ?? string.Empty;
         searchCaret = Math.Max(0, Math.Min(searchCaret, query.Length));
@@ -440,9 +509,9 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             currentPage = 0;
             ApplyFilter();
         }
-        GUI.Label(new Rect(left + 372f, windowRect.y + 117f, width - 372f, 24f), status, hintStyle!);
+        GUI.Label(new Rect(left + 372f, windowRect.y + 114f, width - 372f, 34f), status, hintStyle!);
 
-        DrawQualityFilters(new Rect(left, windowRect.y + 150f, width, 34f));
+        DrawQualityFilters(new Rect(left, windowRect.y + 150f, width, 70f));
         var inventoryCount = 0;
         var warehouseCount = 0;
         var selectedMatches = new List<ItemSearchRecord>();
@@ -451,30 +520,34 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             if (item.StorageKind == StorageKind.Inventory) inventoryCount++; else warehouseCount++;
             if (item.StorageKind == selectedStorage) selectedMatches.Add(item);
         }
-        DrawStorageTab(new Rect(left, windowRect.y + 194f, 190f, 32f), StorageKind.Inventory, $"{UiText.L("인벤토리", "INVENTORY", "背包", "背包")}  {inventoryCount}", new Color(0.32f, 0.86f, 0.46f));
-        DrawStorageTab(new Rect(left + 198f, windowRect.y + 194f, 190f, 32f), StorageKind.Warehouse, $"{UiText.L("창고", "WAREHOUSE", "仓库", "倉庫")}  {warehouseCount}", new Color(0.25f, 0.78f, 0.92f));
+        DrawStorageTab(new Rect(left, windowRect.y + 230f, 190f, 32f), StorageKind.Inventory, $"{UiText.L("인벤토리", "INVENTORY", "背包", "背包")}  {inventoryCount}", new Color(0.32f, 0.86f, 0.46f));
+        DrawStorageTab(new Rect(left + 198f, windowRect.y + 230f, 190f, 32f), StorageKind.Warehouse, $"{UiText.L("창고", "WAREHOUSE", "仓库", "倉庫")}  {warehouseCount}", new Color(0.25f, 0.78f, 0.92f));
 
-        var pageCount = Math.Max(1, (int)Math.Ceiling(selectedMatches.Count / (double)ResultsPerPage));
+        var resultAreaHeight = Math.Max(76f, windowRect.yMax - 52f - (windowRect.y + 272f));
+        var resultsPerPage = Math.Max(1, Math.Min(6, (int)Math.Floor(resultAreaHeight / 76f)));
+        var pageCount = Math.Max(1, (int)Math.Ceiling(selectedMatches.Count / (double)resultsPerPage));
         currentPage = Math.Max(0, Math.Min(currentPage, pageCount - 1));
-        var resultArea = new Rect(left, windowRect.y + 236f, width, 470f);
+        var resultArea = new Rect(left, windowRect.y + 272f, width, resultAreaHeight);
         var currentEvent = Event.current;
-        if (currentEvent.type == EventType.ScrollWheel && resultArea.Contains(currentEvent.mousePosition))
+        var pointerOverTooltip = hoveredItem is not null && tooltipAnchorRect.Contains(currentEvent.mousePosition);
+        if (currentEvent.type == EventType.ScrollWheel && resultArea.Contains(currentEvent.mousePosition) && !pointerOverTooltip && !tooltipOwnsPointer)
         {
+            overlayInputFocused = true;
             currentPage = Math.Max(0, Math.Min(pageCount - 1, currentPage + (currentEvent.delta.y > 0f ? 1 : -1)));
             currentEvent.Use();
         }
 
         if (selectedMatches.Count == 0)
         {
-            GUI.Label(new Rect(left + 12f, windowRect.y + 268f, width - 24f, 40f), allItems.Count == 0
+            GUI.Label(new Rect(left + 12f, windowRect.y + 304f, width - 24f, 40f), allItems.Count == 0
                 ? UiText.L("인벤토리 데이터를 기다리는 중입니다.", "Waiting for inventory data.", "正在等待背包数据。", "正在等待背包資料。")
                 : UiText.L("이 구역에는 검색 조건에 맞는 아이템이 없습니다.", "No matching items in this section.", "此区域没有匹配的物品。", "此區域沒有相符的物品。"), hintStyle!);
         }
         else
         {
-            var pageItems = selectedMatches.Skip(currentPage * ResultsPerPage).Take(ResultsPerPage).ToList();
+            var pageItems = selectedMatches.Skip(currentPage * resultsPerPage).Take(resultsPerPage).ToList();
             for (var index = 0; index < pageItems.Count; index++)
-                DrawResult(pageItems[index], new Rect(left, windowRect.y + 236f + index * 76f, width, 70f));
+                DrawResult(pageItems[index], new Rect(left, windowRect.y + 272f + index * 76f, width, 70f));
         }
 
         if (GUI.Button(new Rect(left, windowRect.yMax - 43f, 88f, 28f), UiText.L("◀ 이전", "◀ Previous", "◀ 上一页", "◀ 上一頁"), compactButtonStyle!) && currentPage > 0) currentPage--;
@@ -482,7 +555,14 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (GUI.Button(new Rect(left + 190f, windowRect.yMax - 43f, 88f, 28f), UiText.L("다음 ▶", "Next ▶", "下一页 ▶", "下一頁 ▶"), compactButtonStyle!) && currentPage + 1 < pageCount) currentPage++;
         GUI.Label(new Rect(left + 294f, windowRect.yMax - 40f, width - 294f, 24f), UiText.L("검색어가 있으면 일치한 아이템만 표시됩니다.", "A search shows matching items only.", "输入搜索词后仅显示匹配物品。", "輸入搜尋詞後僅顯示相符物品。"), hintStyle!);
 
+        GUI.enabled = mainPanelEnabled;
         if (hoveredItem is not null) DrawItemTooltip(hoveredItem);
+        else
+        {
+            tooltipItemKey = string.Empty;
+            tooltipAnchorRect = default;
+            tooltipScroll = Vector2.zero;
+        }
 
         ConsumeRemainingKeyboardEvent();
 
@@ -503,7 +583,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (visible == value) return;
         visible = value;
         overlayInputFocused = visible;
-        Plugin.Logger.LogInfo($"Search panel visible={visible}.");
+        Plugin.DiagInfo($"Search panel visible={visible}.");
         dragging = false;
         if (visible)
         {
@@ -522,6 +602,11 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         }
         else
         {
+            if (bulkSession is not null)
+            {
+                bulkSession.CancelRequested = true;
+                AdvanceBulkOpenSession();
+            }
             overlayInputFocused = false;
             SaveWindowPosition();
             RestoreImeMode();
@@ -548,6 +633,19 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         inputBlockerRect.pivot = new Vector2(0f, 1f);
         inputBlockerRect.anchoredPosition = new Vector2(windowRect.x, -windowRect.y);
         inputBlockerRect.sizeDelta = new Vector2(windowRect.width, windowRect.height);
+        if (inputBlockerTooltipObject is not null && inputBlockerTooltipRect is not null)
+        {
+            var hasTooltip = activeTooltipRect.width > 0f && activeTooltipRect.height > 0f;
+            inputBlockerTooltipObject.SetActive(hasTooltip);
+            if (hasTooltip)
+            {
+                inputBlockerTooltipRect.anchorMin = new Vector2(0f, 1f);
+                inputBlockerTooltipRect.anchorMax = new Vector2(0f, 1f);
+                inputBlockerTooltipRect.pivot = new Vector2(0f, 1f);
+                inputBlockerTooltipRect.anchoredPosition = new Vector2(activeTooltipRect.x, -activeTooltipRect.y);
+                inputBlockerTooltipRect.sizeDelta = new Vector2(activeTooltipRect.width, activeTooltipRect.height);
+            }
+        }
     }
 
     [HideFromIl2Cpp]
@@ -573,10 +671,22 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             var image = inputBlockerRegionObject.GetComponent<Image>();
             image.color = Color.clear;
             image.raycastTarget = true;
+
+            inputBlockerTooltipObject = new GameObject(
+                "PathOfIdleSearchTooltipInputBlocker",
+                Il2CppType.Of<RectTransform>(),
+                Il2CppType.Of<CanvasRenderer>(),
+                Il2CppType.Of<Image>());
+            inputBlockerTooltipObject.transform.SetParent(inputBlockerCanvasObject.transform, false);
+            inputBlockerTooltipRect = inputBlockerTooltipObject.GetComponent<RectTransform>();
+            var tooltipImage = inputBlockerTooltipObject.GetComponent<Image>();
+            tooltipImage.color = Color.clear;
+            tooltipImage.raycastTarget = true;
+            inputBlockerTooltipObject.SetActive(false);
         }
         catch (Exception error)
         {
-            Plugin.Logger.LogWarning($"Localized input blocker unavailable: {error.Message}");
+            Plugin.DiagWarning($"Localized input blocker unavailable: {error.Message}");
             DestroyInputBlocker();
         }
     }
@@ -585,6 +695,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     private void SetInputBlockerActive(bool active)
     {
         if (inputBlockerRegionObject is not null) inputBlockerRegionObject.SetActive(active);
+        if (inputBlockerTooltipObject is not null) inputBlockerTooltipObject.SetActive(active && activeTooltipRect.width > 0f && activeTooltipRect.height > 0f);
     }
 
     [HideFromIl2Cpp]
@@ -594,6 +705,8 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         inputBlockerCanvasObject = null;
         inputBlockerRegionObject = null;
         inputBlockerRect = null;
+        inputBlockerTooltipObject = null;
+        inputBlockerTooltipRect = null;
     }
 
     private void RestoreImeMode()
@@ -610,7 +723,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             if (!keyboardBlockUnavailableLogged)
             {
                 keyboardBlockUnavailableLogged = true;
-                Plugin.Logger.LogWarning("Game keyboard input guard is waiting for Game.keyMgr.");
+                Plugin.DiagWarning("Game keyboard input guard is waiting for Game.keyMgr.");
             }
             return;
         }
@@ -620,13 +733,13 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         {
             previousGameKeyboardBlocked = previous;
             keyboardBlockCaptured = true;
-            Plugin.Logger.LogInfo($"Game keyboard input blocked (previous={previousGameKeyboardBlocked}).");
+            Plugin.DiagInfo($"Game keyboard input blocked (previous={previousGameKeyboardBlocked}).");
         }
 
         if (!GameInputGuard.TrySetUiNavigationBlocked(true, out var previousNavigation) || navigationBlockCaptured) return;
         previousNavigationEventsEnabled = previousNavigation;
         navigationBlockCaptured = true;
-        Plugin.Logger.LogInfo($"Game UI keyboard navigation blocked (previous={previousNavigationEventsEnabled}).");
+        Plugin.DiagInfo($"Game UI keyboard navigation blocked (previous={previousNavigationEventsEnabled}).");
     }
 
     private void TryReleaseGameInputGuards(bool force = false)
@@ -640,12 +753,12 @@ public sealed class InGameSearchOverlay : MonoBehaviour
 
         if (keyboardBlockCaptured && (GameInputGuard.TrySetKeyboardBlocked(previousGameKeyboardBlocked, out _) || force))
         {
-            Plugin.Logger.LogInfo($"Game keyboard input restored to {previousGameKeyboardBlocked}.");
+            Plugin.DiagInfo($"Game keyboard input restored to {previousGameKeyboardBlocked}.");
             keyboardBlockCaptured = false;
         }
         if (navigationBlockCaptured && (GameInputGuard.TrySetUiNavigationBlocked(!previousNavigationEventsEnabled, out _) || force))
         {
-            Plugin.Logger.LogInfo($"Game UI keyboard navigation restored to {previousNavigationEventsEnabled}.");
+            Plugin.DiagInfo($"Game UI keyboard navigation restored to {previousNavigationEventsEnabled}.");
             navigationBlockCaptured = false;
         }
         keyboardReleasePending = keyboardBlockCaptured || navigationBlockCaptured;
@@ -666,9 +779,13 @@ public sealed class InGameSearchOverlay : MonoBehaviour
 
     private bool ShouldBlockPointerInput()
     {
-        if (!visible || !overlayInputFocused) return false;
+        if (!visible) return false;
         var mouse = Input.mousePosition;
-        return windowRect.Contains(new Vector2(mouse.x, Screen.height - mouse.y));
+        var guiMouse = new Vector2(mouse.x, Screen.height - mouse.y);
+        // Pointer input is local to the visible panel/tooltip. Clicking elsewhere
+        // still releases keyboard focus, but a wheel over the panel must never also
+        // reach the game's character selector.
+        return windowRect.Contains(guiMouse) || activeTooltipRect.Contains(guiMouse);
     }
 
     private static string NormalizeLanguageMode(string? value)
@@ -683,7 +800,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (UiText.LanguageCode == code) return;
         UiText.SetLanguage(code);
         panelStyle = null;
-        Plugin.Logger.LogInfo($"Mod UI language: {code} (mode={languageMode}).");
+        Plugin.DiagInfo($"Mod UI language: {code} (mode={languageMode}).");
     }
 
     private string LanguageButtonLabel() => languageMode switch
@@ -715,7 +832,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         UpdateUiLanguage();
         status = UiText.L("모드 언어가 변경되었습니다.", "Mod language changed.", "模组语言已更改。", "模組語言已變更。");
         currentPage = 0;
-        RefreshCurrentPage();
+        RefreshCurrentPage(resetStatus: false);
     }
 
     [HideFromIl2Cpp]
@@ -732,6 +849,8 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     private void DrawPageTab(Rect rect, OverlayPage page, string label)
     {
         var previousBackground = GUI.backgroundColor;
+        var previousEnabled = GUI.enabled;
+        if (bulkSession is not null && page != OverlayPage.BulkOpen) GUI.enabled = false;
         if (selectedPage == page) GUI.backgroundColor = new Color(0.30f, 0.70f, 0.96f);
         if (GUI.Button(rect, label, compactButtonStyle!) && selectedPage != page)
         {
@@ -744,10 +863,12 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             RefreshCurrentPage();
         }
         GUI.backgroundColor = previousBackground;
+        GUI.enabled = previousEnabled;
     }
 
     private void RefreshCurrentPage(bool resetStatus = true)
     {
+        if (languageMode == "auto") UpdateUiLanguage();
         if (selectedPage == OverlayPage.AutoBuild)
         {
             var summary = GameInventoryReader.GetSelectedHeroBuildSummary();
@@ -758,18 +879,41 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         }
         if (selectedPage == OverlayPage.BulkOpen)
         {
-            RefreshBulkCounts();
-            if (resetStatus) status = UiText.L("개봉할 상자 종류와 등급을 선택하세요.", "Choose a box type and quality.", "请选择箱子类型和品质。", "請選擇箱子類型和品質。");
+            if (bulkSession is not null) return;
+            var countsAvailable = RefreshBulkCounts();
+            if (resetStatus && countsAvailable) status = UiText.L("개봉할 상자 종류와 등급을 선택하세요.", "Choose a box type and quality.", "请选择箱子类型和品质。", "請選擇箱子類型和品質。");
             return;
         }
-        RefreshItems();
+        RefreshItems(resetStatus);
     }
 
-    private void RefreshBulkCounts()
+    private bool RefreshBulkCounts()
     {
         var counts = GameInventoryReader.GetBulkToolCounts(Plugin.BulkQualityMask.Value, Plugin.BulkQualityAtLeast.Value);
+        var recovered = bulkCountFailedLastRefresh && counts.Success;
+        bulkCountsAvailable = counts.Success;
         equipmentBoxCount = counts.EquipmentBoxes;
         runeBoxCount = counts.RuneBoxes;
+        if (!counts.Success)
+        {
+            bulkCountFailedLastRefresh = true;
+            status = UiText.L(
+                "상자 데이터를 읽지 못했습니다. 잠시 뒤 다시 시도하세요.",
+                "Box data could not be read. Try again in a moment.",
+                "无法读取箱子数据，请稍后重试。",
+                "無法讀取箱子資料，請稍後再試。");
+        }
+        else
+        {
+            bulkCountFailedLastRefresh = false;
+            if (recovered)
+                status = UiText.L(
+                    $"상자 데이터를 다시 읽었습니다 · 장비 {equipmentBoxCount:N0} / 룬 {runeBoxCount:N0}",
+                    $"Box data recovered · gear {equipmentBoxCount:N0} / runes {runeBoxCount:N0}",
+                    $"箱子数据已恢复 · 装备 {equipmentBoxCount:N0} / 符文 {runeBoxCount:N0}",
+                    $"箱子資料已恢復 · 裝備 {equipmentBoxCount:N0} / 符文 {runeBoxCount:N0}");
+        }
+        return counts.Success;
     }
 
     private void SaveWindowPosition()
@@ -797,6 +941,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
 
     private void SetGameSpeed(float speed)
     {
+        if (!float.IsFinite(speed)) speed = 1f;
         currentSpeed = Mathf.Clamp(speed, 0.1f, 100f);
         speedInput = currentSpeed.ToString("0.##", CultureInfo.InvariantCulture);
         ApplyGameSpeed();
@@ -805,7 +950,8 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     private void ApplyCustomSpeed()
     {
         var normalized = speedInput.Trim().Replace(',', '.');
-        if (!float.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+        if (!float.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            || !float.IsFinite(parsed))
         {
             speedInput = currentSpeed.ToString("0.##", CultureInfo.InvariantCulture);
             status = UiText.L("배속은 0.1~100 사이 숫자로 입력하세요.", "Enter a speed from 0.1 to 100.", "请输入 0.1 到 100 的速度。", "請輸入 0.1 到 100 的速度。");
@@ -820,7 +966,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     {
         Time.timeScale = currentSpeed;
         Plugin.GameSpeed.Value = currentSpeed;
-        Plugin.Logger.LogInfo($"Game speed set to {currentSpeed:0.##}x.");
+        Plugin.DiagInfo($"Game speed set to {currentSpeed:0.##}x.");
     }
 
     private void HandleSpeedInput(Rect speedRect)
@@ -868,7 +1014,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (current is null) return;
         // Keep every title-bar control out of the draggable region. Previously the
         // language button overlapped this rectangle, so its left click started a drag.
-        var header = new Rect(windowRect.x, windowRect.y, windowRect.width - 382f, 52f);
+        var header = new Rect(windowRect.x, windowRect.y, windowRect.width - 382f, 40f);
         if (current.type == EventType.MouseDown && current.button == 0 && header.Contains(current.mousePosition))
         {
             dragging = true;
@@ -892,8 +1038,12 @@ public sealed class InGameSearchOverlay : MonoBehaviour
 
     private void ClampWindowToScreen()
     {
-        var maxX = Math.Max(0f, Screen.width - WindowWidth);
-        var maxY = Math.Max(0f, Screen.height - WindowHeight);
+        // Keep the entire overlay usable at 720p instead of leaving the bottom
+        // navigation outside the screen. Search rows are sized dynamically below.
+        windowRect.width = Math.Min(WindowWidth, Math.Max(1f, Screen.width - 20f));
+        windowRect.height = Math.Min(WindowHeight, Math.Max(1f, Screen.height - 20f));
+        var maxX = Math.Max(0f, Screen.width - windowRect.width);
+        var maxY = Math.Max(0f, Screen.height - windowRect.height);
         windowRect.x = Mathf.Clamp(windowRect.x, 0f, maxX);
         windowRect.y = Mathf.Clamp(windowRect.y, 0f, maxY);
     }
@@ -901,6 +1051,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     [HideFromIl2Cpp]
     private void DrawResult(ItemSearchRecord item, Rect rect)
     {
+        var tooltipOwnsPointer = hoveredItem is not null && tooltipAnchorRect.Contains(Event.current.mousePosition);
         var previousBackground = GUI.backgroundColor;
         GUI.backgroundColor = item.StorageKind == StorageKind.Inventory
             ? new Color(0.30f, 0.76f, 0.42f, 0.72f)
@@ -912,7 +1063,12 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         var transferLabel = item.StorageKind == StorageKind.Inventory
             ? UiText.L("창고로 이동", "Move to storage", "移至仓库", "移至倉庫")
             : UiText.L("인벤토리로 이동", "Move to inventory", "移至背包", "移至背包");
-        if (GUI.Button(new Rect(rect.xMax - 140f, rect.y + 4f, 130f, 28f), transferLabel, compactButtonStyle!)) TransferItem(item);
+        var transferRect = new Rect(rect.xMax - 140f, rect.y + 4f, 130f, 28f);
+        visibleTransferRects.Add(transferRect);
+        var previousEnabled = GUI.enabled;
+        if (tooltipOwnsPointer) GUI.enabled = false;
+        if (GUI.Button(transferRect, transferLabel, compactButtonStyle!)) TransferItem(item);
+        GUI.enabled = previousEnabled;
         var level = item.Level is > 0 ? $"Lv.{item.Level}" : UiText.L("레벨 미상", "Unknown level", "等级未知", "等級未知");
         GUI.Label(new Rect(rect.x + 10f, rect.y + 27f, rect.width - 150f, 19f), HighlightMatches($"{item.StorageLabel}  ·  {item.PartName}  ·  {level}", item.StorageKind), resultMetaStyle!);
         var optionPreview = string.IsNullOrWhiteSpace(item.SetName)
@@ -920,7 +1076,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             : $"{UiText.L("세트", "Set", "套装", "套裝")} {item.SetName}  ·  {item.AffixSummary}".TrimEnd(' ', '·');
         if (!string.IsNullOrWhiteSpace(optionPreview))
             GUI.Label(new Rect(rect.x + 10f, rect.y + 47f, rect.width - 150f, 18f), HighlightMatches(optionPreview, item.StorageKind), resultAffixStyle!);
-        if (rect.Contains(Event.current.mousePosition)) hoveredItem = item;
+        if (!tooltipOwnsPointer && rect.Contains(Event.current.mousePosition) && !transferRect.Contains(Event.current.mousePosition)) hoveredItem = item;
     }
 
     [HideFromIl2Cpp]
@@ -936,19 +1092,48 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             ? string.Empty
             : $"\n\n{UiText.L("세트", "Set", "套装", "套裝")} · {item.SetName}\n{UiText.L("적용 직업", "Class", "适用职业", "適用職業")} · {item.SetJob}\n\n{UiText.L("구성 장비", "Set pieces", "套装部件", "套裝部件")}\n{item.SetMembers}\n\n{UiText.L("세트 효과", "Set bonuses", "套装效果", "套裝效果")}\n{item.SetBonuses}";
         var body = $"{meta}\n\n{UiText.L("설명", "Description", "说明", "說明")}\n{description}\n\n{UiText.L("전체 옵션", "All affixes", "全部词缀", "全部詞綴")}\n{optionText}{setSection}";
-        var bodyHeight = tooltipBodyStyle!.CalcHeight(new GUIContent(body), tooltipWidth - 28f);
+        var contentWidth = Math.Max(80f, tooltipWidth - 48f);
+        var bodyHeight = tooltipBodyStyle!.CalcHeight(new GUIContent(body), contentWidth);
         var tooltipHeight = Mathf.Clamp(bodyHeight + 58f, 190f, Screen.height - 20f);
-        var x = windowRect.xMax + 8f;
-        if (x + tooltipWidth > Screen.width - 10f) x = Math.Max(10f, Screen.width - tooltipWidth - 10f);
-        var y = Mathf.Clamp(Event.current.mousePosition.y - 24f, 10f, Math.Max(10f, Screen.height - tooltipHeight - 10f));
+        var itemKey = $"{item.StorageLabel}|{item.Name}|{item.Level}|{item.AffixSummary}";
+        if (!string.Equals(tooltipItemKey, itemKey, StringComparison.Ordinal))
+        {
+            tooltipItemKey = itemKey;
+            tooltipScroll = Vector2.zero;
+            var rightX = windowRect.xMax;
+            var leftX = windowRect.x - tooltipWidth;
+            var rightSpace = Screen.width - windowRect.xMax;
+            var leftSpace = windowRect.x;
+            var initialX = rightX + tooltipWidth <= Screen.width - 10f
+                ? rightX
+                : leftX >= 10f
+                    ? leftX
+                    : rightSpace >= leftSpace
+                        ? Mathf.Clamp(rightX, 10f, Math.Max(10f, Screen.width - tooltipWidth - 10f))
+                        : Mathf.Clamp(leftX, 10f, Math.Max(10f, Screen.width - tooltipWidth - 10f));
+            var initialY = Mathf.Clamp(Event.current.mousePosition.y - 24f, 10f, Math.Max(10f, Screen.height - tooltipHeight - 10f));
+            tooltipAnchorRect = new Rect(initialX, initialY, tooltipWidth, tooltipHeight);
+        }
+        // Keep the panel fixed after it opens. A mouse-following tooltip moves
+        // its viewport away from the cursor, making its scrollbar impossible to
+        // reach. Touch the main window edge so there is no disappearing gap.
+        var x = Mathf.Clamp(tooltipAnchorRect.x, 0f, Math.Max(0f, Screen.width - tooltipWidth));
+        var y = Mathf.Clamp(tooltipAnchorRect.y, 0f, Math.Max(0f, Screen.height - tooltipHeight));
         var rect = new Rect(x, y, tooltipWidth, tooltipHeight);
+        tooltipAnchorRect = rect;
+        activeTooltipRect = rect;
         var previousBackground = GUI.backgroundColor;
         GUI.backgroundColor = new Color(0.025f, 0.025f, 0.035f, 1f);
         for (var layer = 0; layer < 9; layer++) GUI.Box(rect, GUIContent.none, panelStyle!);
         GUI.Box(rect, GUIContent.none, panelStyle!);
         GUI.backgroundColor = previousBackground;
         GUI.Label(new Rect(rect.x + 14f, rect.y + 10f, rect.width - 28f, 26f), item.Name, tooltipTitleStyle!);
-        GUI.Label(new Rect(rect.x + 14f, rect.y + 40f, rect.width - 28f, rect.height - 52f), body, tooltipBodyStyle!);
+        var viewport = new Rect(rect.x + 10f, rect.y + 40f, rect.width - 20f, rect.height - 50f);
+        var scrollHeight = Math.Max(viewport.height, bodyHeight + 8f);
+        tooltipScroll = GUI.BeginScrollView(viewport, tooltipScroll, new Rect(0f, 0f, contentWidth, scrollHeight));
+        GUI.Label(new Rect(0f, 0f, contentWidth, bodyHeight), body, tooltipBodyStyle!);
+        GUI.EndScrollView();
+        UpdateInputBlocker();
     }
 
     [HideFromIl2Cpp]
@@ -959,31 +1144,47 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (!GameInventoryReader.TryTransfer(item, out var message))
         {
             status = message;
-            Plugin.Logger.LogWarning($"Item transfer failed: {message}");
+            Plugin.DiagWarning($"Item transfer failed: {message}");
             return;
         }
 
         status = message;
-        Plugin.Logger.LogInfo(message);
+        Plugin.DiagInfo(message);
         currentPage = 0;
         nextRefreshAt = Time.unscaledTime + 0.25f;
         RefreshItems();
+        // RefreshItems normally replaces status with the match count. Preserve the
+        // verified destination so the user can actually see where the item went.
+        status = message;
     }
 
     [HideFromIl2Cpp]
     private void DrawQualityFilters(Rect rect)
     {
-        GUI.Label(new Rect(rect.x + 4f, rect.y + 7f, 40f, 20f), UiText.L("등급", "Tier", "品质", "品質"), utilityTitleStyle!);
-        var x = rect.x + 46f;
-        DrawQualityButton(new Rect(x, rect.y + 3f, 54f, 28f), 0, UiText.L("전체", "All", "全部", "全部")); x += 58f;
-        DrawQualityButton(new Rect(x, rect.y + 3f, 54f, 28f), 3, UiText.L("희귀", "Rare", "稀有", "稀有")); x += 58f;
-        DrawQualityButton(new Rect(x, rect.y + 3f, 54f, 28f), 4, UiText.L("전설", "Legend", "传奇", "傳奇")); x += 58f;
-        DrawQualityButton(new Rect(x, rect.y + 3f, 54f, 28f), 5, UiText.L("신화", "Mythic", "神话", "神話")); x += 58f;
-        DrawQualityButton(new Rect(x, rect.y + 3f, 54f, 28f), 6, UiText.L("세트", "Set", "套装", "套裝")); x += 58f;
-        DrawQualityButton(new Rect(x, rect.y + 3f, 54f, 28f), 8, UiText.L("고유", "Unique", "独特", "獨特")); x += 58f;
-        DrawQualityButton(new Rect(x, rect.y + 3f, 54f, 28f), -1, UiText.L("기타", "Other", "其他", "其他"));
+        GUI.Label(new Rect(rect.x + 4f, rect.y + 7f, 54f, 20f), UiText.L("등급", "Quality", "品质", "品質"), utilityTitleStyle!);
+        var entries = new (int Quality, string Label)[]
+        {
+            (0, UiText.L("전체", "All", "全部", "全部")),
+            (1, UiText.L("일반", "Common", "普通", "普通")),
+            (2, UiText.L("고급", "Fine", "精良", "精良")),
+            (3, UiText.L("희귀", "Rare", "稀有", "稀有")),
+            (4, UiText.L("전설", "Legend", "传奇", "傳奇")),
+            (5, UiText.L("신화", "Mythic", "神话", "神話")),
+            (6, UiText.L("세트", "Set", "套装", "套裝")),
+            (7, UiText.L("마법", "Magic", "魔法", "魔法")),
+            (8, UiText.L("고유", "Unique", "独特", "獨特")),
+            (-1, UiText.L("기타", "Other", "其他", "其他"))
+        };
+        var buttonWidth = Math.Max(54f, Math.Min(88f, (rect.width - 76f) / 5f - 6f));
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var row = index / 5;
+            var column = index % 5;
+            var entry = entries[index];
+            DrawQualityButton(new Rect(rect.x + 60f + column * (buttonWidth + 6f), rect.y + 3f + row * 34f, buttonWidth, 28f), entry.Quality, entry.Label);
+        }
 
-        var nextOptionsOnly = GUI.Toggle(new Rect(rect.xMax - 128f, rect.y + 7f, 124f, 22f), searchOptionsOnly, UiText.L(" 옵션만 검색", " Affixes only", " 仅搜索词缀", " 僅搜尋詞綴"), toggleStyle!);
+        var nextOptionsOnly = GUI.Toggle(new Rect(rect.xMax - 128f, rect.y + 39f, 124f, 22f), searchOptionsOnly, UiText.L(" 옵션만 검색", " Affixes only", " 仅搜索词缀", " 僅搜尋詞綴"), toggleStyle!);
         if (nextOptionsOnly != searchOptionsOnly)
         {
             searchOptionsOnly = nextOptionsOnly;
@@ -1032,6 +1233,8 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             "下方品质筛选的是箱子本身，并不会决定开出的奖励品质。",
             "下方品質篩選的是箱子本身，並不會決定開出的獎勵品質。"), hintStyle!);
 
+        var panelEnabled = GUI.enabled;
+        if (bulkSession is not null) GUI.enabled = false;
         var nextSkip = GUI.Toggle(new Rect(rect.x + 18f, rect.y + 91f, 145f, 24f), Plugin.SkipBulkConfirmation.Value, UiText.L(" 2단계 확인 생략", " Skip second confirm", " 跳过二次确认", " 略過二次確認"), toggleStyle!);
         if (nextSkip != Plugin.SkipBulkConfirmation.Value)
         {
@@ -1045,6 +1248,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         if (nextAutoStore != Plugin.AutoStoreOpenedEquipment.Value)
         {
             Plugin.AutoStoreOpenedEquipment.Value = nextAutoStore;
+            armedBulkOpen = BulkToolKind.None;
             status = nextAutoStore
                 ? UiText.L("개봉 장비를 게임 규칙에 따라 자동 보관합니다.", "Opened gear follows the game's automatic storage rules.", "开启的装备将按游戏规则自动入库。", "開啟的裝備將按遊戲規則自動入庫。")
                 : UiText.L("개봉 장비를 인벤토리에 남깁니다.", "Opened gear stays in the inventory.", "开启的装备将留在背包。", "開啟的裝備將留在背包。");
@@ -1053,22 +1257,50 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         DrawBulkOpenButton(new Rect(rect.x + 24f + (rect.width - 42f) / 2f, rect.y + 130f, (rect.width - 42f) / 2f, 52f), BulkToolKind.RuneBox, runeBoxCount, UiText.L("룬 상자", "Rune boxes", "符文箱", "符文箱"));
 
         GUI.Label(new Rect(rect.x + 18f, rect.y + 202f, 110f, 24f), UiText.L("상자 등급", "Box Quality", "箱子品质", "箱子品質"), utilityTitleStyle!);
-        var x = rect.x + 18f;
-        DrawBulkQualityButton(new Rect(x, rect.y + 232f, 78f, 34f), 0, UiText.L("전체", "All", "全部", "全部")); x += 84f;
-        DrawBulkQualityButton(new Rect(x, rect.y + 232f, 78f, 34f), 3, UiText.L("희귀", "Rare", "稀有", "稀有")); x += 84f;
-        DrawBulkQualityButton(new Rect(x, rect.y + 232f, 78f, 34f), 4, UiText.L("전설", "Legend", "传奇", "傳奇")); x += 84f;
-        DrawBulkQualityButton(new Rect(x, rect.y + 232f, 78f, 34f), 5, UiText.L("신화", "Mythic", "神话", "神話")); x += 84f;
-        DrawBulkQualityButton(new Rect(x, rect.y + 232f, 78f, 34f), 6, UiText.L("세트", "Set", "套装", "套裝")); x += 84f;
-        DrawBulkQualityButton(new Rect(x, rect.y + 232f, 78f, 34f), 8, UiText.L("고유", "Unique", "独特", "獨特")); x += 84f;
-        DrawBulkQualityButton(new Rect(x, rect.y + 232f, 78f, 34f), -1, UiText.L("기타", "Other", "其他", "其他"));
-        var nextAtLeast = GUI.Toggle(new Rect(rect.x + 18f, rect.y + 281f, 170f, 24f), Plugin.BulkQualityAtLeast.Value, UiText.L(" 선택 등급 이상 모두", " Selected or higher", " 所选品质及以上", " 所選品質以上"), toggleStyle!);
+        var qualityEntries = new (int Quality, string Label)[]
+        {
+            (0, UiText.L("전체", "All", "全部", "全部")),
+            (1, UiText.L("일반", "Common", "普通", "普通")),
+            (2, UiText.L("고급", "Fine", "精良", "精良")),
+            (3, UiText.L("희귀", "Rare", "稀有", "稀有")),
+            (4, UiText.L("전설", "Legend", "传奇", "傳奇")),
+            (5, UiText.L("신화", "Mythic", "神话", "神話")),
+            (6, UiText.L("세트", "Set", "套装", "套裝")),
+            (7, UiText.L("마법", "Magic", "魔法", "魔法")),
+            (8, UiText.L("고유", "Unique", "独特", "獨特")),
+            (-1, UiText.L("기타", "Other", "其他", "其他"))
+        };
+        var qualityWidth = (rect.width - 60f) / 5f;
+        for (var index = 0; index < qualityEntries.Length; index++)
+        {
+            var row = index / 5;
+            var column = index % 5;
+            var entry = qualityEntries[index];
+            DrawBulkQualityButton(new Rect(rect.x + 18f + column * (qualityWidth + 6f), rect.y + 232f + row * 40f, qualityWidth, 34f), entry.Quality, entry.Label);
+        }
+        var nextAtLeast = GUI.Toggle(new Rect(rect.x + 18f, rect.y + 318f, 190f, 24f), Plugin.BulkQualityAtLeast.Value, UiText.L(" 선택 등급 이상 모두", " Selected or higher", " 所选品质及以上", " 所選品質以上"), toggleStyle!);
         if (nextAtLeast != Plugin.BulkQualityAtLeast.Value)
         {
             Plugin.BulkQualityAtLeast.Value = nextAtLeast;
             armedBulkOpen = BulkToolKind.None;
             RefreshBulkCounts();
         }
-        GUI.Label(new Rect(rect.x + 18f, rect.y + 318f, rect.width - 36f, 28f), status, hintStyle!);
+        GUI.enabled = panelEnabled;
+        if (bulkSession is not null)
+        {
+            GUI.Label(new Rect(rect.x + 18f, rect.y + 348f, rect.width - 150f, 42f),
+                UiText.L(
+                    $"진행 중 · {bulkSession.Opened:N0}/{bulkSession.Initial:N0}개 확인",
+                    $"Opening · {bulkSession.Opened:N0}/{bulkSession.Initial:N0} confirmed",
+                    $"进行中 · 已确认 {bulkSession.Opened:N0}/{bulkSession.Initial:N0}",
+                    $"進行中 · 已確認 {bulkSession.Opened:N0}/{bulkSession.Initial:N0}"), hintStyle!);
+            if (GUI.Button(new Rect(rect.xMax - 122f, rect.y + 349f, 104f, 32f), UiText.L("중단", "Cancel", "取消", "取消"), buttonStyle!))
+                bulkSession.CancelRequested = true;
+        }
+        else
+        {
+            GUI.Label(new Rect(rect.x + 18f, rect.y + 352f, rect.width - 36f, 38f), status, hintStyle!);
+        }
     }
 
     [HideFromIl2Cpp]
@@ -1085,10 +1317,10 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         GUI.Label(new Rect(rect.x + 20f, rect.y + 18f, rect.width - 140f, 30f), UiText.L("현재 선택 영웅 자동 최적화", "Optimize the Selected Hero", "自动优化当前英雄", "自動最佳化目前英雄"), titleStyle!);
         if (GUI.Button(new Rect(rect.xMax - 112f, rect.y + 16f, 92f, 30f), UiText.L("새로고침", "Refresh", "刷新", "重新整理"), buttonStyle!)) RefreshCurrentPage();
         GUI.Label(new Rect(rect.x + 20f, rect.y + 54f, rect.width - 40f, 42f), UiText.L(
-            "게임에서 영웅을 먼저 선택하세요. 추천 점수는 직업, 능력치, 스킬 설명과 장비 옵션을 함께 사용합니다.",
-            "Select a hero in the game first. Recommendations combine job, attributes, skill descriptions, and gear affixes.",
-            "请先在游戏中选择英雄。推荐会综合职业、属性、技能说明与装备词缀。",
-            "請先在遊戲中選擇英雄。推薦會綜合職業、屬性、技能說明與裝備詞綴。"), hintStyle!);
+            "게임에서 영웅을 먼저 선택하세요. 공격 테마는 피해 근사치, 방어 테마는 생존 능력치를 우선하며 공식 추천 장비에는 가산점을 주지 않습니다.",
+            "Select a hero first. Damage themes prioritize the damage proxy; Defense prioritizes survival stats. Official guide gear gets no score bonus.",
+            "请先选择英雄。伤害主题优先伤害近似值，防御主题优先生存属性；官方指南装备不获得评分加成。",
+            "請先選擇英雄。傷害主題優先傷害近似值，防禦主題優先生存屬性；官方指南裝備不獲得評分加成。"), hintStyle!);
 
         GUI.backgroundColor = new Color(0.24f, 0.42f, 0.62f, 0.90f);
         GUI.Box(new Rect(rect.x + 20f, rect.y + 105f, rect.width - 40f, 92f), GUIContent.none, panelStyle!);
@@ -1129,7 +1361,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             Plugin.AutoBuildIncludeStorage.Value = nextStorage;
             armedAutoBuild = AutoBuildAction.None;
         }
-        var nextTransform = GUI.Toggle(new Rect(rect.x + 340f, rect.y + 316f, 340f, 26f), Plugin.AutoTransformSkills.Value, UiText.L($" 부족한 추천 스킬 변환 (최대 {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)}회)", $" Transform missing guide skills (max {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)})", $" 转换缺少的推荐技能（最多 {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)} 次）", $" 轉換缺少的推薦技能（最多 {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)} 次）"), toggleStyle!);
+        var nextTransform = GUI.Toggle(new Rect(rect.x + 340f, rect.y + 316f, 340f, 26f), Plugin.AutoTransformSkills.Value, UiText.L($" 부족한 성능 계획 스킬 변환 (최대 {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)}회)", $" Transform missing plan skills (max {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)})", $" 转换缺少的性能方案技能（最多 {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)} 次）", $" 轉換缺少的效能方案技能（最多 {Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50)} 次）"), toggleStyle!);
         if (nextTransform != Plugin.AutoTransformSkills.Value)
         {
             Plugin.AutoTransformSkills.Value = nextTransform;
@@ -1142,10 +1374,10 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             UiText.L("스킬·특성 자동 배분", "Auto-allocate Skills", "自动分配技能", "自動分配技能"));
 
         GUI.Label(new Rect(rect.x + 24f, rect.y + 428f, rect.width - 48f, 64f), UiText.L(
-            "테마는 장비 전체 옵션·세트 효과와 기본 스킬의 60초 예상 성능에 적용됩니다.\n스킬 변환을 켜면 게임의 신전 비용을 사용해 추천 스킬을 맞춘 뒤 집중 배분합니다.",
-            "Themes affect full-loadout effects and the base skill's estimated 60-second output.\nWhen enabled, transformation uses the shrine's normal cost to seek guide skills before focused allocation.",
-            "主题会影响整套装备效果与基础技能的 60 秒预估输出。\n启用转换后，会按神殿正常费用寻找推荐技能，再集中分配点数。",
-            "主題會影響整套裝備效果與基礎技能的 60 秒預估輸出。\n啟用轉換後，會按神殿正常費用尋找推薦技能，再集中分配點數。"), tooltipBodyStyle!);
+            "점수는 게임 능력치와 스킬 60초 근사치이며, 전체 전투·조건부 효과의 정확한 DPS가 아닙니다.\n스킬 변환은 게임의 신전 비용을 사용한 뒤 선택한 성능 목표에 집중 배분합니다.",
+            "The score uses native attributes plus a 60-second skill proxy; it is not exact full-combat DPS or conditional-effect simulation.\nTransformation uses the shrine's normal cost before allocation to the selected performance objective.",
+            "评分使用游戏原生属性与技能 60 秒近似值，并非完整战斗 DPS 或条件效果的精确模拟。\n技能转换会消耗神殿正常费用，再按所选性能目标集中分配。",
+            "評分使用遊戲原生屬性與技能 60 秒近似值，並非完整戰鬥 DPS 或條件效果的精確模擬。\n技能轉換會消耗神殿正常費用，再按所選效能目標集中分配。"), tooltipBodyStyle!);
         GUI.Label(new Rect(rect.x + 24f, rect.y + 500f, rect.width - 48f, 42f), UiText.L(
             "주의: 스킬 변환·특성 초기화에는 게임의 정상 비용이 듭니다. 초기화 비용은 남겨 두며, 실행 버튼은 두 번 눌러야 합니다.",
             "Caution: transformation and talent reset use normal game costs. Reset cost is reserved; each action requires a second click.",
@@ -1198,7 +1430,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             ? GameInventoryReader.TryOptimizeSelectedHeroGear(Plugin.AutoBuildIncludeStorage.Value, out var message)
             : GameInventoryReader.TryOptimizeSelectedHeroSkills(out message);
         status = message;
-        if (succeeded) Plugin.Logger.LogInfo(message); else Plugin.Logger.LogWarning(message);
+        if (succeeded) Plugin.DiagInfo(message); else Plugin.DiagWarning(message);
         var summary = GameInventoryReader.GetSelectedHeroBuildSummary();
         selectedHeroSummary = summary.Hero;
         selectedHeroProfile = summary.Profile;
@@ -1228,9 +1460,11 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         var armed = armedBulkOpen == kind && Time.unscaledTime <= bulkConfirmUntil;
         var previousEnabled = GUI.enabled;
         var previousBackground = GUI.backgroundColor;
-        GUI.enabled = count > 0;
+        GUI.enabled = previousEnabled && bulkSession is null && bulkCountsAvailable && count > 0;
         GUI.backgroundColor = armed ? new Color(1f, 0.48f, 0.18f) : new Color(0.34f, 0.62f, 0.92f);
-        var text = count <= 0
+        var text = !bulkCountsAvailable
+            ? UiText.L("상자 데이터 확인 불가", "Box data unavailable", "箱子数据不可用", "箱子資料不可用")
+            : count <= 0
             ? UiText.L($"{label} 없음", $"No {label}", $"没有{label}", $"沒有{label}")
             : armed
                 ? UiText.L($"확인: {label} {count:N0}개 모두 열기", $"Confirm: open all {count:N0} {label}", $"确认：开启全部 {count:N0} 个{label}", $"確認：開啟全部 {count:N0} 個{label}")
@@ -1243,6 +1477,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
     [HideFromIl2Cpp]
     private void BeginOrConfirmBulkOpen(BulkToolKind kind, int count, string label)
     {
+        if (bulkSession is not null) return;
         if (!Plugin.SkipBulkConfirmation.Value && (armedBulkOpen != kind || Time.unscaledTime > bulkConfirmUntil))
         {
             armedBulkOpen = kind;
@@ -1256,18 +1491,31 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         }
 
         armedBulkOpen = BulkToolKind.None;
-        if (!GameInventoryReader.TryOpenAll(kind, Plugin.BulkQualityMask.Value, Plugin.BulkQualityAtLeast.Value, Plugin.AutoStoreOpenedEquipment.Value, out var message))
+        if (!GameInventoryReader.TryBeginBulkOpen(kind, Plugin.BulkQualityMask.Value, Plugin.BulkQualityAtLeast.Value,
+                Plugin.AutoStoreOpenedEquipment.Value, label, out var session, out var message))
         {
             status = message;
-            Plugin.Logger.LogWarning($"Bulk open failed: {message}");
             return;
         }
-
+        bulkSession = session;
         status = message;
-        Plugin.Logger.LogInfo(message);
+        nextRefreshAt = float.PositiveInfinity;
+    }
+
+    private void AdvanceBulkOpenSession()
+    {
+        if (bulkSession is null) return;
+        var step = GameInventoryReader.AdvanceBulkOpen(bulkSession);
+        status = step.Message;
+        if (!step.Finished) return;
+        var finalMessage = step.Message;
+        bulkSession = null;
         currentPage = 0;
         nextRefreshAt = Time.unscaledTime + 0.25f;
         RefreshBulkCounts();
+        // Count refresh is useful, but the terminal action result must remain
+        // visible even if that refresh itself fails or recovers.
+        status = finalMessage;
     }
 
     private void DrawStorageTab(Rect rect, StorageKind kind, string label, Color selectedColor)
@@ -1383,7 +1631,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         .Replace("<", "&lt;", StringComparison.Ordinal)
         .Replace(">", "&gt;", StringComparison.Ordinal);
 
-    private void RefreshItems()
+    private void RefreshItems(bool resetStatus = true)
     {
         try
         {
@@ -1392,10 +1640,10 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             var toolCounts = GameInventoryReader.GetBulkToolCounts(Plugin.BulkQualityMask.Value, Plugin.BulkQualityAtLeast.Value);
             allItems.Clear();
             allItems.AddRange(next);
+            bulkCountsAvailable = toolCounts.Success;
             equipmentBoxCount = toolCounts.EquipmentBoxes;
             runeBoxCount = toolCounts.RuneBoxes;
-            ApplyFilter();
-            UpdateStatus();
+            ApplyFilter(resetStatus);
         }
         catch (Exception error)
         {
@@ -1404,11 +1652,11 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             equipmentBoxCount = 0;
             runeBoxCount = 0;
             status = UiText.L("데이터 대기 중", "Waiting for data", "等待数据", "等待資料");
-            Plugin.Logger.LogDebug($"Inventory refresh deferred: {error.Message}");
+            Plugin.DiagDebug($"Inventory refresh deferred: {error.Message}");
         }
     }
 
-    private void ApplyFilter()
+    private void ApplyFilter(bool updateStatus = true)
     {
         matches.Clear();
         var parsed = SearchQuery.Parse(query);
@@ -1427,7 +1675,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
             var name = string.Compare(left.Name, right.Name, StringComparison.CurrentCultureIgnoreCase);
             return name != 0 ? name : string.Compare(left.StorageLabel, right.StorageLabel, StringComparison.CurrentCultureIgnoreCase);
         });
-        UpdateStatus();
+        if (updateStatus) UpdateStatus();
     }
 
     private void UpdateStatus()
@@ -1460,7 +1708,7 @@ public sealed class InGameSearchOverlay : MonoBehaviour
         catch (Exception error)
         {
             uiFont = null;
-            Plugin.Logger.LogDebug($"Preferred UI font unavailable: {error.Message}");
+            Plugin.DiagDebug($"Preferred UI font unavailable: {error.Message}");
         }
         panelStyle = CopyStyle(GUI.skin.box);
         panelStyle.font = uiFont ?? panelStyle.font;
@@ -1610,32 +1858,58 @@ internal sealed class SearchQuery
     {
         var required = new List<string[]>();
         var excluded = new List<string[]>();
-        foreach (Match match in Regex.Matches(value ?? string.Empty, "\\\"([^\\\"]+)\\\"|\\S+"))
+        var pending = new List<string>();
+        var pendingExcluded = false;
+        var joinNext = false;
+
+        void Flush()
         {
-            var token = match.Value.Trim();
-            var isExcluded = token.StartsWith("-", StringComparison.Ordinal) && token.Length > 1;
-            if (isExcluded) token = token[1..];
-            token = token.Trim('"');
-            var alternatives = token.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(Normalize).Where(part => part.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
-            if (alternatives.Length == 0) continue;
-            (isExcluded ? excluded : required).Add(alternatives);
+            if (pending.Count == 0) return;
+            var alternatives = pending.Distinct(StringComparer.Ordinal).ToArray();
+            (pendingExcluded ? excluded : required).Add(alternatives);
+            pending.Clear();
         }
+
+        // Pipe is a real token, so `fire|cold`, `fire | cold`, quoted phrases,
+        // and negative quoted phrases all share the same parser.
+        foreach (Match match in Regex.Matches(value ?? string.Empty,
+                     @"(?<or>\|)|(?<exclude>-)?(?:""(?<quoted>[^""]+)""|(?<word>[^\s|]+))"))
+        {
+            if (match.Groups["or"].Success)
+            {
+                if (pending.Count > 0) joinNext = true;
+                continue;
+            }
+            var token = Normalize(match.Groups["quoted"].Success
+                ? match.Groups["quoted"].Value
+                : match.Groups["word"].Value);
+            if (token.Length == 0) continue;
+            var isExcluded = match.Groups["exclude"].Success;
+            if (pending.Count == 0)
+            {
+                pendingExcluded = isExcluded;
+                pending.Add(token);
+            }
+            else if (joinNext && pendingExcluded == isExcluded)
+            {
+                pending.Add(token);
+            }
+            else
+            {
+                Flush();
+                pendingExcluded = isExcluded;
+                pending.Add(token);
+            }
+            joinNext = false;
+        }
+        Flush();
         return new SearchQuery(required, excluded);
     }
 
     public static List<string> HighlightTerms(string value)
     {
-        var terms = new List<string>();
-        foreach (Match match in Regex.Matches(value ?? string.Empty, "\\\"([^\\\"]+)\\\"|\\S+"))
-        {
-            var token = match.Value.Trim();
-            if (token.StartsWith("-", StringComparison.Ordinal)) continue;
-            token = token.Trim('"');
-            foreach (var alternative in token.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                if (alternative.Length > 0 && !terms.Contains(alternative, StringComparer.CurrentCultureIgnoreCase)) terms.Add(alternative);
-        }
-        return terms;
+        return Parse(value).requiredGroups.SelectMany(group => group)
+            .Distinct(StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
     public bool Matches(string searchableText)
@@ -1708,15 +1982,20 @@ internal enum BulkToolKind
 
 internal static class QualityFilterLogic
 {
-    private static readonly int[] RankedQualities = { 3, 4, 5, 6, 8 };
+    private static readonly int[] RankedQualities = { 1, 2, 3, 4, 5, 6, 7, 8 };
 
     public static int BitFor(int quality) => quality switch
     {
+        // Preserve every bit used by earlier releases, then append Common/Fine.
+        1 => 1 << 7,
+        2 => 1 << 8,
         3 => 1 << 0,
         4 => 1 << 1,
         5 => 1 << 2,
         6 => 1 << 3,
         8 => 1 << 4,
+        // Keep the existing Unique/Other/Magic bits stable for saved configs.
+        7 => 1 << 6,
         _ => 1 << 5
     };
 
@@ -1737,9 +2016,26 @@ internal static class QualityFilterLogic
 }
 
 internal sealed record BulkToolStack(string Key, BulkToolKind Kind, object ItemData, int Count, int Quality);
+internal sealed class BulkOpenSession
+{
+    public BulkToolKind Kind { get; init; }
+    public int QualityMask { get; init; }
+    public bool AtLeast { get; init; }
+    public bool AutoStoreEquipment { get; init; }
+    public string Label { get; init; } = string.Empty;
+    public string SaveIdentity { get; init; } = string.Empty;
+    public int Initial { get; init; }
+    public int Opened { get; set; }
+    public int AutoStored { get; set; }
+    public bool CancelRequested { get; set; }
+    public bool MutationAttempted { get; set; }
+    public HashSet<string> KnownEquipment { get; init; } = new(StringComparer.Ordinal);
+    public HashSet<string> FailedAutoStore { get; init; } = new(StringComparer.Ordinal);
+    public HashSet<string> BlockedStacks { get; init; } = new(StringComparer.Ordinal);
+}
 internal sealed record InventoryEquipment(string Key, object ItemData, object SourceField);
 internal sealed record AutoBuildSummary(string Hero, string Profile, string Status);
-internal sealed record GearCandidate(ItemSearchRecord Record, string Key, int Part, int SetId, int DefinitionId, int WeaponType, double Score, double NumericScore, int DirectMatches, int ThemeMatches);
+internal sealed record GearCandidate(ItemSearchRecord Record, string Key, int Part, int SetId, int DefinitionId, int WeaponType, double Score, double NumericScore, int DirectMatches, int ThemeMatches, HashSet<string> NonStackingEffectKeys);
 internal sealed record TeamCandidate(string Key, string Name, string Job, double Offense, double Defense, double Support, double Control, double Power, HashSet<string> Themes, string BuildHint);
 internal sealed record TeamSuggestion(TeamCandidate A, TeamCandidate B, TeamCandidate C, double Score, string Reason);
 
@@ -1749,6 +2045,7 @@ internal static class GameInventoryReader
     private static Assembly? gameAssembly;
     private static bool languageTableLogged;
     private static readonly HashSet<string> loggedBulkToolQualities = new(StringComparer.Ordinal);
+    private static bool bulkCountFailureLogged;
 
     private sealed record HeroEffectProfile(
         HeroFocus Focus,
@@ -1758,6 +2055,8 @@ internal static class GameInventoryReader
         List<HashSet<int>> SkillWeaponPreferences,
         int ActiveSkillMainType,
         HashSet<int> ActiveSkillTags,
+        int PreviewBaseSkillId,
+        int PreviewBaseSkillLevel,
         HashSet<int> SkillIds,
         HashSet<int> SkillInfoIds,
         HashSet<int> TalentIds,
@@ -1772,19 +2071,39 @@ internal static class GameInventoryReader
 
     private sealed record EquipmentScore(double Total, int DirectMatches, int ThemeMatches);
     private sealed record EquipAttrMapping(int EquipType, int BattleAttrType);
-    private sealed record SetEffectScoreRow(int Pieces, string Text, int AbilityId);
+    private sealed record SetEffectScoreRow(int EffectId, int Pieces, string Text, int AbilityId);
     private sealed record GearSlot(int Part, bool MainWeapon, int WeaponSlotIndex, string Label);
     private enum MoveReceiptKind { FieldMove, BagToVault, VaultToBag }
     private sealed record MoveReceipt(MoveReceiptKind Kind, object? FromField, object? ToField, object BeforeFromItem, object? BeforeToItem, object? TreasureData = null, object? GroupData = null);
-    private sealed record LoadoutState(List<GearCandidate> Items, HashSet<string> UsedKeys, double HeuristicScore);
+    private sealed record LoadoutState(List<GearCandidate> Items, HashSet<string> UsedKeys, HashSet<string> NonStackingEffectKeys, double HeuristicScore);
     private sealed record PreferredTalentPlan(
         object? Build,
         List<int> SkillTalentIds,
         List<int> MasteryTalentIds,
         HashSet<int> PreferredSkillIds,
-        string BuildName);
+        string BuildName,
+        Dictionary<int, double>? ObjectiveScores = null);
     private sealed record PreferredActiveSkill(int GuideTalentId, int TalentId, int SkillId, object Talent);
-    private sealed record SkillTransformResult(int Attempts, int Matched, int Target, int SpentBlood, string Note, bool CleanupSucceeded);
+    private sealed record NativeSkillRoleProfile(Dictionary<int, double> DamageByType, double Heal, double Shield, bool Summon);
+    private sealed record SkillTransformResult(int Attempts, int Matched, int Target, int SpentBlood, string Note, bool CleanupSucceeded, bool ExecutionSucceeded = true);
+    private sealed record SkillVariantVerification(List<int> Expected, List<int> Actual, List<int> Missing, List<int> Unexpected)
+    {
+        public bool IsExact => Missing.Count == 0 && Unexpected.Count == 0;
+    }
+    private sealed record DeduplicatedEffectContribution(string Key, int Level, double Value, int DirectMatches);
+    private sealed record GearAbilityBaseline(Dictionary<int, int> NonGearCounts);
+    private sealed record GearEffectVerification(
+        List<string> MissingAbilities,
+        List<string> UnexpectedAbilities,
+        List<string> MissingExtraTalents,
+        List<string> UnexpectedExtraTalents,
+        List<int> MissingSetEffects,
+        List<int> UnexpectedSetEffects)
+    {
+        public bool IsVerified => MissingAbilities.Count == 0 && UnexpectedAbilities.Count == 0
+                                  && MissingExtraTalents.Count == 0 && UnexpectedExtraTalents.Count == 0
+                                  && MissingSetEffects.Count == 0 && UnexpectedSetEffects.Count == 0;
+    }
     private static List<EquipAttrMapping>? equipAttrMappings;
     private static Dictionary<int, List<SetEffectScoreRow>>? setEffectScoreRows;
     private static readonly Dictionary<int, string> SetThemeTextCache = new();
@@ -1834,12 +2153,10 @@ internal static class GameInventoryReader
             var quality = ReadNullableInt(save, "quality") ?? 0;
             var requestedTheme = NormalizeBuildTheme(Plugin.AutoBuildTheme.Value);
             var focus = ResolveHeroFocus(hero, requestedTheme);
-            var build = GetPreferredBuild(hero, focus);
-            var buildName = build is null ? UiText.L("직업 추천표 없음", "No job guide", "无职业指南", "無職業指南") : Clean(ReadString(build, "name") ?? EnglishName(build, string.Empty) ?? string.Empty);
             var heroLine = $"{name}  ·  {jobName}  ·  Lv.{level}  ·  Q{quality}";
             var profile = requestedTheme == "auto"
-                ? UiText.L($"자동 분석: {focus.Localized}  ·  우선 빌드: {buildName}", $"Auto profile: {focus.English}  ·  Preferred guide: {buildName}", $"自动分析：{focus.Localized}  ·  优先流派：{buildName}", $"自動分析：{focus.Localized}  ·  優先流派：{buildName}")
-                : UiText.L($"선택 테마: {focus.Localized}  ·  우선 빌드: {buildName}", $"Selected theme: {focus.English}  ·  Preferred guide: {buildName}", $"已选主题：{focus.Localized}  ·  优先流派：{buildName}", $"已選主題：{focus.Localized}  ·  優先流派：{buildName}");
+                ? UiText.L($"자동 목표: {focus.Localized}  ·  공식 장비 추천 보너스 없음", $"Auto objective: {focus.English}  ·  no official-gear bonus", $"自动目标：{focus.Localized} · 无官方装备加成", $"自動目標：{focus.Localized} · 無官方裝備加成")
+                : UiText.L($"선택 목표: {focus.Localized}  ·  공식 장비 추천 보너스 없음", $"Selected objective: {focus.English}  ·  no official-gear bonus", $"所选目标：{focus.Localized} · 无官方装备加成", $"所選目標：{focus.Localized} · 無官方裝備加成");
             return new AutoBuildSummary(heroLine, profile, UiText.L("자동 장착할 기능을 선택하세요.", "Choose an optimization action.", "请选择自动优化功能。", "請選擇自動最佳化功能。"));
         }
         catch (Exception error)
@@ -1919,7 +2236,7 @@ internal static class GameInventoryReader
         }
         catch (Exception error)
         {
-            Plugin.Logger.LogDebug($"Team recommendation report deferred: {error.Message}");
+            Plugin.DiagDebug($"Team recommendation report deferred: {error.Message}");
             return false;
         }
     }
@@ -1975,12 +2292,13 @@ internal static class GameInventoryReader
         return results.OrderByDescending(result => result.Score).Take(3).ToList();
     }
 
+    [Conditional("PATHOFIDLE_DIAGNOSTICS")]
     private static void LogTeamSet(string scope, List<TeamSuggestion> teams)
     {
         for (var index = 0; index < teams.Count; index++)
         {
             var team = teams[index];
-            Plugin.Logger.LogInfo($"TEAM-{scope}|{index + 1}|{team.Score:0.0}|{team.A.Name} [{team.A.Job}] + {team.B.Name} [{team.B.Job}] + {team.C.Name} [{team.C.Job}]|{team.Reason}|{team.A.BuildHint} ; {team.B.BuildHint} ; {team.C.BuildHint}");
+            Plugin.DiagInfo($"TEAM-{scope}|{index + 1}|{team.Score:0.0}|{team.A.Name} [{team.A.Job}] + {team.B.Name} [{team.B.Job}] + {team.C.Name} [{team.C.Job}]|{team.Reason}|{team.A.BuildHint} ; {team.B.BuildHint} ; {team.C.BuildHint}");
         }
     }
 
@@ -2005,6 +2323,11 @@ internal static class GameInventoryReader
             gearTalentData = Read(hero, "heroTalentData");
             var slots = GetGearSlots();
             var currentBySlot = slots.ToDictionary(slot => slot, slot => GetEquippedItem(hero, slot.Part, slot.MainWeapon));
+            // Capture non-gear ability counts before the first move. Post-equip
+            // verification can then prove the exact count delta instead of a
+            // same-ID class/skill ability masking a missing gear ability.
+            var abilityBaseline = CaptureGearAbilityBaseline(hero,
+                currentBySlot.Values.Where(item => item is not null).Cast<object>());
             var records = ReadAll(includeStorage);
             foreach (var current in currentBySlot.Values.Where(item => item is not null).DistinctBy(item => NativeObjectKey(item!, item!)))
                 records.Add(DescribeItem(current!, UiText.L("현재 착용", "Equipped", "当前装备", "目前裝備"), StorageKind.Inventory, StorageSource.Equipped));
@@ -2019,8 +2342,17 @@ internal static class GameInventoryReader
             // Search complete eight-slot loadouts (two weapon slots plus six other
             // parts). Keeping equipped pieces in the pool prevents a good existing
             // set from disappearing just because it is no longer in the bag.
-            var maxMythic = Math.Max(1, ToInt(InvokeStatic("HeroEquipData", "GetMaxMythEquipCount", hero)));
-            var beam = new List<LoadoutState> { new(new List<GearCandidate>(), new HashSet<string>(StringComparer.Ordinal), 0d) };
+            var maxMythic = Convert.ToInt32(
+                InvokeRequiredStaticMany("HeroEquipData", "GetMaxMythEquipCount", hero)
+                ?? throw new InvalidOperationException("The native Mythic equipment limit is unavailable."),
+                CultureInfo.InvariantCulture);
+            if (maxMythic is < 0 or > 8)
+                throw new InvalidOperationException($"The native Mythic equipment limit is invalid ({maxMythic}).");
+            Plugin.DiagInfo($"AUTO-GEAR MYTHIC LIMIT|heroLevel={ReadNullableInt(Read(hero, "saveHeroData"), "level") ?? 0}|limit={maxMythic}");
+            var beam = new List<LoadoutState>
+            {
+                new(new List<GearCandidate>(), new HashSet<string>(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), 0d)
+            };
             foreach (var slot in slots)
             {
                 var current = currentBySlot[slot];
@@ -2032,25 +2364,70 @@ internal static class GameInventoryReader
                     .Concat(slotCandidates.Where(candidate => candidate.SetId > 0)
                         .GroupBy(candidate => candidate.SetId)
                         .SelectMany(group => group.OrderByDescending(candidate => candidate.Score).Take(3)))
+                    .Concat(slotCandidates.Where(candidate => candidate.Record.Quality == 5)
+                        .OrderByDescending(candidate => candidate.Score + candidate.NumericScore * 0.1d).Take(12))
                     .Concat(slotCandidates.Where(candidate => profile.RecommendedEquipmentIds.Contains(candidate.DefinitionId)))
                     .GroupBy(candidate => candidate.Key, StringComparer.Ordinal)
                     .Select(group => group.OrderByDescending(candidate => candidate.Score).First())
                     .OrderByDescending(candidate => candidate.Score)
                     .Take(36).ToList();
+                // High-value duplicate Uniques can otherwise fill the whole
+                // per-slot shortlist. Keep one representative for every narrow
+                // exclusive-effect policy signature (and one ordinary
+                // alternative), so the beam can compare a different effect.
+                foreach (var alternative in slotCandidates
+                             .GroupBy(candidate => GetNonStackingEffectSignature(candidate.NonStackingEffectKeys.Where(IsHardExclusiveEffectKey)), StringComparer.Ordinal)
+                             .Select(group => group.OrderByDescending(candidate => candidate.Score).First())
+                             .OrderByDescending(candidate => candidate.Score))
+                {
+                    if (options.All(candidate => candidate.Key != alternative.Key)) options.Add(alternative);
+                }
+                // Native keeps the highest-level source when several equipment
+                // affixes grant the same extra skill. Preserve a max-level
+                // representative even when a lower-level, high-stat copy won
+                // the ordinary shortlist.
+                foreach (var alternative in slotCandidates
+                             .SelectMany(candidate => GetGrantedExtraSkillLevels(candidate.Record.ItemData)
+                                 .Select(entry => (Candidate: candidate, entry.Key, entry.Value)))
+                             .GroupBy(entry => entry.Key, StringComparer.Ordinal)
+                             .Select(group => group.OrderByDescending(entry => entry.Value)
+                                 .ThenByDescending(entry => entry.Candidate.Score).First().Candidate))
+                {
+                    if (options.All(candidate => candidate.Key != alternative.Key)) options.Add(alternative);
+                }
                 if (current is not null && options.All(candidate => candidate.Key != currentKey))
                 {
                     var currentCandidate = candidates.FirstOrDefault(candidate => candidate.Key == currentKey);
                     if (currentCandidate is not null) options.Add(currentCandidate);
                 }
 
-                beam = beam.SelectMany(state => options
+                var expandedBeam = beam.SelectMany(state => options
                         .Where(candidate => !state.UsedKeys.Contains(candidate.Key))
+                        // Only the user's duplicate-Unique policy rejects a
+                        // whole item. Boolean variants and highest-level extra
+                        // skills are allowed here; their duplicated score is
+                        // removed by ScoreItemsWithDeduplicatedEffects so valid
+                        // numeric affixes and set pieces are not discarded.
+                        .Where(candidate => !candidate.NonStackingEffectKeys
+                            .Where(IsHardExclusiveEffectKey)
+                            .Any(state.NonStackingEffectKeys.Contains))
                         .Where(candidate => state.Items.Count(item => item.Record.Quality == 5) + (candidate.Record.Quality == 5 ? 1 : 0) <= maxMythic)
                         .Where(candidate => !HasLegendMythWeaponConflict(state.Items.Append(candidate)))
-                        .Select(candidate => new LoadoutState(
-                            state.Items.Append(candidate).ToList(),
-                            new HashSet<string>(state.UsedKeys, StringComparer.Ordinal) { candidate.Key },
-                            state.HeuristicScore + candidate.Score)))
+                        .Select(candidate =>
+                        {
+                            var combinedItems = state.Items.Append(candidate).ToList();
+                            return new LoadoutState(
+                                combinedItems,
+                                new HashSet<string>(state.UsedKeys, StringComparer.Ordinal) { candidate.Key },
+                                UnionEffectKeys(state.NonStackingEffectKeys, candidate.NonStackingEffectKeys),
+                                ScoreItemsWithDeduplicatedEffects(combinedItems, profile));
+                        }));
+                // Both weapon slots are now known. Later armor choices cannot
+                // repair an unusable skill package, so remove incompatible
+                // pairs before they can occupy the entire 360-state beam.
+                if (slot.Part == 1 && !slot.MainWeapon)
+                    expandedBeam = expandedBeam.Where(state => IsLoadoutWeaponCompatible(state.Items, profile));
+                beam = expandedBeam
                     .OrderByDescending(state => state.HeuristicScore + EstimatePartialSetSynergy(state.Items, profile))
                     .Take(360).ToList();
                 if (beam.Count == 0) throw new InvalidOperationException($"No valid loadout remains for {slot.Label}.");
@@ -2058,18 +2435,41 @@ internal static class GameInventoryReader
 
             var currentItems = currentBySlot.Values.Where(item => item is not null).Cast<object>().ToList();
             var finalistStates = beam
+                .Where(state => IsLoadoutWeaponCompatible(state.Items, profile))
                 .OrderByDescending(state => state.HeuristicScore + EstimatePartialSetSynergy(state.Items, profile))
-                .Take(96).ToList();
+                .Take(96)
+                .ToList();
+            if (finalistStates.Count == 0)
+            {
+                message = UiText.L(
+                    "현재 후보에서는 추천 스킬을 모두 사용할 수 있는 8부위 장비 조합을 찾지 못했습니다.",
+                    "No evaluated 8-slot loadout can use every recommended skill with its selected weapons.",
+                    "在已评估候选中找不到可用所选武器使用全部推荐技能的 8 部位装备组合。",
+                    "在已評估候選中找不到可用所選武器使用全部推薦技能的 8 部位裝備組合。");
+                return false;
+            }
             var winner = finalistStates.Select(state => new { State = state, Score = ScoreCompleteLoadout(state.Items, hero, profile, currentItems) })
                 .OrderByDescending(entry => entry.Score).First();
 
-            Plugin.Logger.LogInfo($"AUTO-GEAR PLAN|focus={focus.English}|score={winner.Score:0.0}|" +
+            var selectedMythics = winner.State.Items.Count(candidate => candidate.Record.Quality == 5);
+            Plugin.DiagInfo($"AUTO-GEAR MYTHIC RESULT|limit={maxMythic}|selected={selectedMythics}|available={candidates.Count(candidate => candidate.Record.Quality == 5)}");
+            foreach (var slot in slots)
+            {
+                var topMythics = candidates.Where(candidate => candidate.Part == slot.Part && candidate.Record.Quality == 5)
+                    .OrderByDescending(candidate => candidate.Score + candidate.NumericScore * 0.1d)
+                    .Take(3)
+                    .Select(candidate => $"{candidate.Record.Name}:{candidate.Score:0.0}/{candidate.NumericScore:0.0}");
+                var selected = winner.State.Items[slots.IndexOf(slot)];
+                Plugin.DiagInfo($"AUTO-GEAR MYTHIC SLOT|slot={slot.Label}|selected={selected.Record.Name}:Q{selected.Record.Quality}|top={string.Join(',', topMythics)}");
+            }
+
+            Plugin.DiagInfo($"AUTO-GEAR PLAN|focus={focus.English}|score={winner.Score:0.0}|" +
                                   string.Join(" ; ", slots.Select((slot, index) =>
                                   {
                                       var choice = winner.State.Items[index];
-                                       return $"{slot.Label}={choice.Record.Name} Q{choice.Record.Quality} Lv{choice.Record.Level ?? 0} itemScore={choice.Score:0.0} numeric={choice.NumericScore:0.0} direct={choice.DirectMatches} theme={choice.ThemeMatches} set={choice.SetId}";
+                                       return $"{slot.Label}={choice.Record.Name} Q{choice.Record.Quality} Lv{choice.Record.Level ?? 0} itemScore={choice.Score:0.0} numeric={choice.NumericScore:0.0} direct={choice.DirectMatches} theme={choice.ThemeMatches} set={choice.SetId} effectPolicy={GetNonStackingEffectSignature(choice.NonStackingEffectKeys)}";
                                   })));
-            Plugin.Logger.LogInfo($"AUTO-GEAR SET PLAN|focus={focus.English}|{DescribeSetPlan(winner.State.Items, profile)}");
+            Plugin.DiagInfo($"AUTO-GEAR SET PLAN|focus={focus.English}|{DescribeSetPlan(winner.State.Items, profile)}");
 
             // Apply ordinary replacements first so an outgoing Mythic or a
             // conflicting weapon can be removed before a restricted item is
@@ -2101,7 +2501,7 @@ internal static class GameInventoryReader
                         ? "The bag is full and no non-target equipment can be staged for Vault access."
                         : bridgeFailure);
                 }
-                Plugin.Logger.LogInfo("AUTO-GEAR BRIDGE|staged one non-target bag equipment item to storage");
+                Plugin.DiagInfo("AUTO-GEAR BRIDGE|staged one non-target bag equipment item to storage");
             }
             for (var pass = 0; pass < 3 && pending.Count > 0; pass++)
             {
@@ -2128,12 +2528,12 @@ internal static class GameInventoryReader
                         && TryStageEquippedWeapon(hero, oppositeSlot, seasonData, moveJournal, out stageFailure))
                     {
                         stagedConflictingWeapon = true;
-                        Plugin.Logger.LogInfo($"AUTO-GEAR STAGE|slot={oppositeSlot.Label}|moved the opposite conflicting weapon to bag");
+                        Plugin.DiagInfo($"AUTO-GEAR STAGE|slot={oppositeSlot.Label}|moved the opposite conflicting weapon to bag");
                     }
                     else
                     {
                         if (!string.IsNullOrWhiteSpace(stageFailure))
-                            Plugin.Logger.LogWarning($"AUTO-GEAR STAGE FAILED|reason={stageFailure}");
+                            Plugin.DiagWarning($"AUTO-GEAR STAGE FAILED|reason={stageFailure}");
                         break;
                     }
                 }
@@ -2145,7 +2545,7 @@ internal static class GameInventoryReader
 
             var attemptFailures = lastFailures.Select(entry => $"{entry.Key}: {entry.Value.Reason}").ToList();
             foreach (var entry in lastFailures)
-                Plugin.Logger.LogWarning($"AUTO-GEAR MOVE FAILED|slot={entry.Key}|code={entry.Value.Code}|reason={entry.Value.Reason}");
+                Plugin.DiagWarning($"AUTO-GEAR MOVE FAILED|slot={entry.Key}|code={entry.Value.Code}|reason={entry.Value.Reason}");
 
             var finalMatches = 0;
             var changed = 0;
@@ -2156,17 +2556,19 @@ internal static class GameInventoryReader
             {
                 var slot = slots[index];
                 var candidate = winner.State.Items[index];
-                var actual = GetEquippedItem(hero, slot.Part, slot.MainWeapon);
-                if (!NativeEquals(actual, candidate.Record.ItemData)) continue;
+                var destination = GetEquipDestinationField(hero, slot);
+                if (destination is null
+                    || !IsVerifiedHeroEquipField(hero, candidate.Record.ItemData, destination)) continue;
+                var actual = Read(destination, "itemData");
                 finalMatches++;
                 if (NativeEquals(currentBySlot[slot], actual)) unchanged++;
                 else
                 {
                     changed++;
-                    directMatches += candidate.DirectMatches;
                     themeMatches += candidate.ThemeMatches;
                 }
             }
+            directMatches = CountEffectiveDirectMatches(winner.State.Items, profile);
 
             var failed = slots.Count - finalMatches;
             if (failed > 0)
@@ -2175,7 +2577,7 @@ internal static class GameInventoryReader
                 if (gearTalentData is not null)
                 {
                     try { InvokeRequiredInstance(gearTalentData, "ReapplySkillVariantsFromEquippedItems"); }
-                    catch (Exception refreshError) { Plugin.Logger.LogWarning($"AUTO-GEAR VARIANT REFRESH FAILED|{refreshError.GetBaseException().Message}"); }
+                    catch (Exception refreshError) { Plugin.DiagWarning($"AUTO-GEAR VARIANT REFRESH FAILED|{refreshError.GetBaseException().Message}"); }
                 }
                 var firstFailure = attemptFailures.FirstOrDefault() ?? UiText.L("일부 목표 슬롯이 최종 장비와 일치하지 않음", "some target slots did not match the final loadout", "部分目标栏位与最终装备不一致", "部分目標欄位與最終裝備不一致");
                 message = UiText.L(
@@ -2187,30 +2589,87 @@ internal static class GameInventoryReader
             }
 
             // Equipment affixes are the game's source of truth for skill
-            // transformations. Refresh them only after the full eight-slot
-            // transaction has committed.
-            var storageNormalizationFailures = NormalizeCommittedStorage(moveJournal, seasonData, targetItems);
-            moveJournal.Clear();
+            // transformations. Verify them while the move journal can still
+            // restore the previous loadout. Storage normalization can move
+            // outgoing items again, so it deliberately runs only after this
+            // rollback-capable postcondition.
             var variantRefreshFailed = false;
+            var gearEffectVerificationFailed = false;
+            var unusableSkillFailed = false;
             try
             {
                 InvokeRequiredInstance(gearTalentData ?? throw new InvalidOperationException("Talent data is unavailable."), "ReapplySkillVariantsFromEquippedItems");
-                VerifyEquippedSkillVariants(hero, gearTalentData, "AUTO-GEAR");
+                var variantVerification = VerifyEquippedSkillVariants(hero, gearTalentData, "AUTO-GEAR");
+                variantRefreshFailed = !variantVerification.IsExact;
+                gearEffectVerificationFailed = !VerifyCommittedGearEffects(hero, gearTalentData, abilityBaseline, "AUTO-GEAR").IsVerified;
+                unusableSkillFailed = ReadBool(InvokeRequiredInstance(gearTalentData, "IsHasUnusableSkill"));
+                if (unusableSkillFailed)
+                    Plugin.DiagWarning("AUTO-GEAR SKILL USABILITY FAILED|at least one learned skill cannot be used by the committed weapons");
             }
             catch (Exception refreshError)
             {
                 variantRefreshFailed = true;
-                Plugin.Logger.LogWarning($"AUTO-GEAR VARIANT REFRESH FAILED|{refreshError.GetBaseException().Message}");
+                gearEffectVerificationFailed = true;
+                Plugin.DiagWarning($"AUTO-GEAR VARIANT REFRESH FAILED|{refreshError.GetBaseException().Message}");
             }
-            var commitWarningKo = storageNormalizationFailures > 0 || variantRefreshFailed ? " · 보관/스킬 효과 경고는 로그 확인" : string.Empty;
-            var commitWarningEn = storageNormalizationFailures > 0 || variantRefreshFailed ? " · check the log for storage/skill-effect warnings" : string.Empty;
-            var commitWarningZhCn = storageNormalizationFailures > 0 || variantRefreshFailed ? " · 请查看日志中的存储/技能效果警告" : string.Empty;
-            var commitWarningZhTw = storageNormalizationFailures > 0 || variantRefreshFailed ? " · 請查看日誌中的儲存/技能效果警告" : string.Empty;
+            if (variantRefreshFailed || gearEffectVerificationFailed)
+            {
+                var rollbackFailures = RollbackMoveJournal(moveJournal);
+                try
+                {
+                    InvokeRequiredInstance(gearTalentData ?? throw new InvalidOperationException("Talent data is unavailable."), "ReapplySkillVariantsFromEquippedItems");
+                }
+                catch (Exception refreshError)
+                {
+                    Plugin.DiagWarning($"AUTO-GEAR VARIANT ROLLBACK REFRESH FAILED|{refreshError.GetBaseException().Message}");
+                }
+                message = UiText.L(
+                    $"장비 특수 효과 검증 실패 · 이전 장비 복구 {(rollbackFailures == 0 ? "완료" : $"실패 {rollbackFailures}건")}",
+                    $"Gear special-effect verification failed · previous loadout rollback {(rollbackFailures == 0 ? "complete" : $"failed for {rollbackFailures} move(s)")}",
+                    $"装备特殊效果验证失败 · 旧装备回滚{(rollbackFailures == 0 ? "完成" : $"失败 {rollbackFailures} 项")}",
+                    $"裝備特殊效果驗證失敗 · 舊裝備復原{(rollbackFailures == 0 ? "完成" : $"失敗 {rollbackFailures} 項")}");
+                return false;
+            }
+
+            var storageNormalizationFailures = NormalizeCommittedStorage(moveJournal, seasonData, targetItems);
+            moveJournal.Clear();
+            var commitWarningKo = (storageNormalizationFailures, unusableSkillFailed) switch
+            {
+                (> 0, true) => " · 장비는 적용됐지만 보관 정리 실패 및 기존 학습 스킬 무기 불일치(스킬 자동 배분 실행)",
+                (> 0, false) => " · 장비는 적용됐지만 보관 정리 일부 실패(수동 확인 필요)",
+                (0, true) => " · 장비는 적용됐지만 기존 학습 스킬이 현재 무기와 불일치(스킬 자동 배분 실행)",
+                _ => string.Empty
+            };
+            var commitWarningEn = (storageNormalizationFailures, unusableSkillFailed) switch
+            {
+                (> 0, true) => " · gear applied, but storage cleanup failed and old learned skills mismatch the weapons (run Auto Skills)",
+                (> 0, false) => " · gear applied, but some storage cleanup failed (manual review needed)",
+                (0, true) => " · gear applied, but old learned skills mismatch the weapons (run Auto Skills)",
+                _ => string.Empty
+            };
+            var commitWarningZhCn = (storageNormalizationFailures, unusableSkillFailed) switch
+            {
+                (> 0, true) => " · 装备已应用，但存储整理失败且旧技能与武器不匹配（请运行自动技能）",
+                (> 0, false) => " · 装备已应用，但部分存储整理失败（需要手动检查）",
+                (0, true) => " · 装备已应用，但旧技能与武器不匹配（请运行自动技能）",
+                _ => string.Empty
+            };
+            var commitWarningZhTw = (storageNormalizationFailures, unusableSkillFailed) switch
+            {
+                (> 0, true) => " · 裝備已套用，但儲存整理失敗且舊技能與武器不符（請執行自動技能）",
+                (> 0, false) => " · 裝備已套用，但部分儲存整理失敗（需要手動檢查）",
+                (0, true) => " · 裝備已套用，但舊技能與武器不符（請執行自動技能）",
+                _ => string.Empty
+            };
 
             message = changed > 0
-                ? UiText.L($"8부위 실제 장착 완료 · {focus.Localized} · 교체 {changed}개 · 스킬 직접 효과 {directMatches} · 테마 효과 {themeMatches} · 유지 {unchanged}개{commitWarningKo}", $"All 8 slots equipped · {focus.English} · changed {changed} · direct skill effects {directMatches} · theme effects {themeMatches} · kept {unchanged}{commitWarningEn}", $"8部位已实际装备 · {focus.Localized} · 更换 {changed} · 技能直接效果 {directMatches} · 主题效果 {themeMatches} · 保留 {unchanged}{commitWarningZhCn}", $"8部位已實際裝備 · {focus.Localized} · 更換 {changed} · 技能直接效果 {directMatches} · 主題效果 {themeMatches} · 保留 {unchanged}{commitWarningZhTw}")
-                : UiText.L($"{focus.Localized} 테마에서 현재 8부위가 이미 최고 점수 조합입니다.", $"The current 8-slot loadout is already the highest-scoring {focus.English} combination.", $"当前 8 部位已是 {focus.Localized} 主题下评分最高的组合。", $"目前 8 部位已是 {focus.Localized} 主題下評分最高的組合。");
-            return true;
+                ? UiText.L($"8부위 실제 장착 완료 · {focus.Localized} · 교체 {changed}개 · 현재 스킬 효과 일치 {directMatches} · 테마 키워드 일치 {themeMatches} · Mythic {selectedMythics}/{maxMythic} · 유지 {unchanged}개{commitWarningKo}", $"All 8 slots equipped · {focus.English} · changed {changed} · learned-skill effect matches {directMatches} · theme-keyword matches {themeMatches} · Mythic {selectedMythics}/{maxMythic} · kept {unchanged}{commitWarningEn}", $"8部位已实际装备 · {focus.Localized} · 更换 {changed} · 当前技能效果匹配 {directMatches} · 主题关键词匹配 {themeMatches} · 神话 {selectedMythics}/{maxMythic} · 保留 {unchanged}{commitWarningZhCn}", $"8部位已實際裝備 · {focus.Localized} · 更換 {changed} · 目前技能效果相符 {directMatches} · 主題關鍵字符合 {themeMatches} · 神話 {selectedMythics}/{maxMythic} · 保留 {unchanged}{commitWarningZhTw}")
+                : UiText.L($"평가한 후보 중 현재 8부위의 {focus.Localized} 추천 점수가 가장 높습니다.{commitWarningKo}", $"The current 8-slot loadout has the highest {focus.English} recommendation score among the evaluated candidates.{commitWarningEn}", $"在已评估候选中，当前 8 部位的 {focus.Localized} 推荐评分最高。{commitWarningZhCn}", $"在已評估候選中，目前 8 部位的 {focus.Localized} 推薦評分最高。{commitWarningZhTw}");
+            // Storage tidy-up and the old learned-skill compatibility check run
+            // after the target gear is committed. A compatibility warning is
+            // actionable by Auto Skills and may be expected during a theme
+            // switch, but it must not be reported as a verified success.
+            return storageNormalizationFailures == 0 && !unusableSkillFailed;
         }
         catch (Exception error)
         {
@@ -2219,7 +2678,7 @@ internal static class GameInventoryReader
             if (gearTalentData is not null)
             {
                 try { InvokeRequiredInstance(gearTalentData, "ReapplySkillVariantsFromEquippedItems"); }
-                catch (Exception refreshError) { Plugin.Logger.LogWarning($"AUTO-GEAR VARIANT REFRESH FAILED|{refreshError.GetBaseException().Message}"); }
+                catch (Exception refreshError) { Plugin.DiagWarning($"AUTO-GEAR VARIANT REFRESH FAILED|{refreshError.GetBaseException().Message}"); }
             }
             var rollbackNote = !hadMoves ? string.Empty : rollbackFailures == 0 ? " · previous loadout restored" : $" · rollback failed for {rollbackFailures} move(s)";
             message = UiText.L($"장비 자동 장착 실패: {error.GetBaseException().Message}{(!hadMoves ? string.Empty : rollbackFailures == 0 ? " · 이전 장비 복구 완료" : $" · 복구 실패 {rollbackFailures}건")}", $"Auto-equip failed: {error.GetBaseException().Message}{rollbackNote}", $"自动装备失败：{error.GetBaseException().Message}{(!hadMoves ? string.Empty : rollbackFailures == 0 ? " · 已恢复旧装备" : $" · 回滚失败 {rollbackFailures} 项")}", $"自動裝備失敗：{error.GetBaseException().Message}{(!hadMoves ? string.Empty : rollbackFailures == 0 ? " · 已復原舊裝備" : $" · 復原失敗 {rollbackFailures} 項")}");
@@ -2229,6 +2688,14 @@ internal static class GameInventoryReader
 
     public static bool TryOptimizeSelectedHeroSkills(out string message)
     {
+        var journalTransformAttempts = 0;
+        var journalTransformBlood = 0;
+        var journalResetInvoked = false;
+        var journalResetSucceeded = false;
+        var journalResetPrice = 0;
+        var journalBaseChanged = false;
+        var journalAllocationStart = -1;
+        object? journalSaveHero = null;
         try
         {
             var hero = GetSelectedHero();
@@ -2239,6 +2706,7 @@ internal static class GameInventoryReader
             }
             var talentData = Read(hero, "heroTalentData");
             var saveHero = Read(hero, "saveHeroData");
+            journalSaveHero = saveHero;
             var dataManager = ReadStatic("Game", "dataMgr");
             var seasonData = Read(dataManager, "nowSeasonData");
             var townData = Read(seasonData, "townData");
@@ -2257,21 +2725,159 @@ internal static class GameInventoryReader
             // Resolve the build before resetting. Resetting removes the active
             // skill evidence that Auto uses to identify the intended archetype.
             var focus = ResolveHeroFocus(hero, Plugin.AutoBuildTheme.Value);
-            var preferred = GetPreferredTalentPlan(hero, focus);
+            var spentBefore = GetResettableTalentPointCount(talentData, talents);
+            var totalTalentPoints = PreviewExactTalentPointBudget(talentData, saveHero, talents, spentBefore);
+            var preferred = GetPerformanceTalentPlan(hero, focus, totalTalentPoints);
+
+            // Validate the computed performance plan before choosing the subset
+            // that fits the hero's currently unlocked rows. Invalid rows must
+            // not be silently discarded and reported as a successful plan.
+            var invalidGuideSkillTalentIds = preferred.SkillTalentIds.Where(id =>
+            {
+                var definition = InvokeStatic("TableData", "getTTalentData", id);
+                if (definition is null || (ReadNullableInt(definition, "type") ?? 0) != 1) return true;
+                return (ReadNullableInt(definition, "skillId") ?? 0) <= 0;
+            }).ToList();
+            var invalidGuideMasteryTalentIds = preferred.MasteryTalentIds.Where(id =>
+            {
+                var definition = InvokeStatic("TableData", "getTTalentData", id);
+                return definition is null || (ReadNullableInt(definition, "type") ?? 0) != 2
+                       || (ReadNullableInt(definition, "masteryId") ?? 0) <= 0;
+            }).ToList();
+            if (invalidGuideSkillTalentIds.Count > 0 || invalidGuideMasteryTalentIds.Count > 0)
+            {
+                message = UiText.L(
+                    $"성능 계획 데이터가 불완전합니다 · 스킬 {string.Join(',', invalidGuideSkillTalentIds)} · 마스터리 {string.Join(',', invalidGuideMasteryTalentIds)}. 초기화하지 않았습니다.",
+                    $"The performance plan is incomplete · skills {string.Join(',', invalidGuideSkillTalentIds)} · masteries {string.Join(',', invalidGuideMasteryTalentIds)}. No reset was performed.",
+                    $"性能方案数据不完整 · 技能 {string.Join(',', invalidGuideSkillTalentIds)} · 专精 {string.Join(',', invalidGuideMasteryTalentIds)}。未执行重置。",
+                    $"效能方案資料不完整 · 技能 {string.Join(',', invalidGuideSkillTalentIds)} · 專精 {string.Join(',', invalidGuideMasteryTalentIds)}。未執行重設。");
+                return false;
+            }
+            // A guide can list more active skills than the hero currently has
+            // unlocked shrine rows. Pick the actual row-sized loadout before
+            // washing; otherwise any arbitrary N matching skills make the wash
+            // look complete and a build-defining skill can never be rolled.
+            preferred = SelectPreferredActiveSkillTargets(hero, talentData, preferred, focus);
             var gridById = BuildTalentGridById(talents);
             if (gridById.Count == 0)
             {
                 message = UiText.L("배분 가능한 스킬·특성이 없습니다.", "No skills or talents can receive points.", "没有可分配点数的技能或天赋。", "沒有可分配點數的技能或天賦。");
                 return false;
             }
+            var selectedActiveDefinitions = preferred.SkillTalentIds
+                .Select(id => InvokeStatic("TableData", "getTTalentData", id))
+                .Where(IsTransformableSkillDefinition).ToList();
+            if (selectedActiveDefinitions.Count == 0)
+            {
+                message = UiText.L(
+                    "현재 레벨에서 자동 배분에 사용할 해금된 액티브 스킬 슬롯이 없습니다. 초기화하지 않았습니다.",
+                    "No unlocked active-skill slot is available for this plan at the current level. No reset was performed.",
+                    "当前等级没有可用于此方案的已解锁主动技能槽，未执行重置。",
+                    "目前等級沒有可用於此方案的已解鎖主動技能欄，未執行重設。");
+                return false;
+            }
+            var incompatibleSkillIds = selectedActiveDefinitions
+                .Select(definition => ReadNullableInt(definition, "skillId") ?? 0)
+                .Where(id => id > 0 && !IsSkillCompatibleWithEquippedWeapons(hero, id))
+                .Distinct().ToList();
+            var desiredBaseTalentForPreflight = preferred.SkillTalentIds
+                .FirstOrDefault(id => IsBaseSkillDefinition(InvokeStatic("TableData", "getTTalentData", id)));
+            if (desiredBaseTalentForPreflight > 0)
+            {
+                if (!gridById.ContainsKey(desiredBaseTalentForPreflight))
+                {
+                    message = UiText.L(
+                        $"추천 기본 스킬 {desiredBaseTalentForPreflight}을 현재 특성표에서 찾지 못했습니다. 초기화하지 않았습니다.",
+                        $"Recommended base skill {desiredBaseTalentForPreflight} is absent from the current talent grid. No reset was performed.",
+                        $"当前天赋表中没有推荐基础技能 {desiredBaseTalentForPreflight}，未执行重置。",
+                        $"目前天賦表中沒有推薦基礎技能 {desiredBaseTalentForPreflight}，未執行重設。");
+                    return false;
+                }
+                var desiredBaseDefinitionForPreflight = InvokeStatic("TableData", "getTTalentData", desiredBaseTalentForPreflight);
+                var desiredBaseSkillForPreflight = ReadNullableInt(desiredBaseDefinitionForPreflight, "skillId") ?? 0;
+                if (desiredBaseSkillForPreflight > 0 && !IsSkillCompatibleWithEquippedWeapons(hero, desiredBaseSkillForPreflight))
+                    incompatibleSkillIds.Add(desiredBaseSkillForPreflight);
+            }
+            incompatibleSkillIds = incompatibleSkillIds.Distinct().ToList();
+            if (incompatibleSkillIds.Count > 0)
+            {
+                message = UiText.L(
+                    $"현재 무기로 추천 스킬을 사용할 수 없습니다 ({string.Join(',', incompatibleSkillIds)}). 먼저 장비 자동 장착을 실행하세요. 초기화하지 않았습니다.",
+                    $"The current weapons cannot use the recommended skills ({string.Join(',', incompatibleSkillIds)}). Run Auto Gear first. No reset was performed.",
+                    $"当前武器无法使用推荐技能（{string.Join(',', incompatibleSkillIds)}）。请先运行自动装备，未执行重置。",
+                    $"目前武器無法使用推薦技能（{string.Join(',', incompatibleSkillIds)}）。請先執行自動裝備，未執行重設。");
+                return false;
+            }
+
+            var selectedActiveSkillIds = selectedActiveDefinitions
+                .Select(definition => ReadNullableInt(definition, "skillId") ?? 0)
+                .Where(id => id > 0).Distinct().ToHashSet();
+            var currentUnlockedActiveSkillIds = GetTransformableTalents(talentData)
+                .Where(talent => !IsTalentLockedRequired(talent))
+                .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "skillId") ?? 0)
+                .Where(id => id > 0).ToHashSet();
+            var missingBeforeTransform = selectedActiveSkillIds
+                .Where(id => !currentUnlockedActiveSkillIds.Contains(id)).ToList();
+            if (missingBeforeTransform.Count > 0
+                && (!Plugin.AutoTransformSkills.Value || Plugin.AutoTransformMaxAttempts.Value <= 0))
+            {
+                message = UiText.L(
+                    $"추천 스킬 변환이 필요합니다 ({string.Join(',', missingBeforeTransform)}). 스킬 변환을 켜거나 직접 변환하세요. 초기화하지 않았습니다.",
+                    $"Recommended skills require transformation ({string.Join(',', missingBeforeTransform)}). Enable skill transformation or transform them manually. No reset was performed.",
+                    $"推荐技能需要转换（{string.Join(',', missingBeforeTransform)}）。请启用技能转换或手动转换，未执行重置。",
+                    $"推薦技能需要轉換（{string.Join(',', missingBeforeTransform)}）。請啟用技能轉換或手動轉換，未執行重設。");
+                return false;
+            }
+
+            var investedFixedOutsidePlan = GetTransformableTalents(talentData)
+                .Where(IsTalentFixedRequired)
+                .Where(talent => GetSavedTalentLevel(talent) > 0)
+                .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "skillId") ?? 0)
+                .Where(id => id > 0 && !selectedActiveSkillIds.Contains(id))
+                .Distinct().ToList();
+            if (investedFixedOutsidePlan.Count > 0)
+            {
+                message = UiText.L(
+                    $"추천 빌드 밖의 고정 스킬에 포인트가 있습니다 ({string.Join(',', investedFixedOutsidePlan)}). 고정을 해제하거나 포인트를 정리한 뒤 다시 실행하세요. 변환·초기화하지 않았습니다.",
+                    $"Fixed skills outside the selected guide have invested points ({string.Join(',', investedFixedOutsidePlan)}). Unfix or respec them first. No transformation or reset was performed.",
+                    $"所选流派之外的固定技能已有加点（{string.Join(',', investedFixedOutsidePlan)}）。请先取消固定或整理点数。未执行转换或重置。",
+                    $"所選流派之外的固定技能已有加點（{string.Join(',', investedFixedOutsidePlan)}）。請先取消固定或整理點數。未執行轉換或重設。");
+                return false;
+            }
+
+            var desiredGuideMasteryIds = preferred.MasteryTalentIds.Distinct().ToList();
+            var missingGuideMasteryIds = desiredGuideMasteryIds.Where(id => !gridById.ContainsKey(id)).ToList();
+            if (missingGuideMasteryIds.Count > 0)
+            {
+                message = UiText.L(
+                    $"추천 마스터리 노드를 현재 특성표에서 찾지 못했습니다 ({string.Join(',', missingGuideMasteryIds)}). 변환·초기화하지 않았습니다.",
+                    $"Guide mastery nodes are missing from the current talent grid ({string.Join(',', missingGuideMasteryIds)}). No transformation or reset was performed.",
+                    $"当前天赋树中缺少推荐专精节点（{string.Join(',', missingGuideMasteryIds)}）。未执行转换或重置。",
+                    $"目前天賦樹中缺少推薦專精節點（{string.Join(',', missingGuideMasteryIds)}）。未執行轉換或重設。");
+                return false;
+            }
+
+            // The exact native point budget was previewed before the performance
+            // plan, so mastery selection and the mutation preflight use the same
+            // milestone-adjusted total.
+            var preResetGuideMasteryIds = desiredGuideMasteryIds
+                .Where(id => !IsTalentLockedRequired(gridById[id]))
+                .ToList();
+            var minimumRequiredPoints = selectedActiveSkillIds.Count + preResetGuideMasteryIds.Count;
+            if (totalTalentPoints < minimumRequiredPoints)
+            {
+                message = UiText.L(
+                    $"추천 스킬·마스터리 최소 배분 포인트가 부족합니다 · 필요 {minimumRequiredPoints:N0} / 보유 {totalTalentPoints:N0}. 변환·초기화하지 않았습니다.",
+                    $"Not enough talent points for the minimum guide package · need {minimumRequiredPoints:N0} / have {totalTalentPoints:N0}. No transformation or reset was performed.",
+                    $"推荐技能与专精的最低分配点数不足 · 需要 {minimumRequiredPoints:N0} / 拥有 {totalTalentPoints:N0}。未执行转换或重置。",
+                    $"推薦技能與專精的最低分配點數不足 · 需要 {minimumRequiredPoints:N0} / 擁有 {totalTalentPoints:N0}。未執行轉換或重設。");
+                return false;
+            }
 
             var resetPrice = Convert.ToInt32(InvokeRequiredInstance(talentData, "GetResetTalentPrice") ?? throw new InvalidOperationException("Talent reset price is unavailable."), CultureInfo.InvariantCulture);
+            journalResetPrice = resetPrice;
             var bloodType = CreateEnum("EResType", 2) ?? throw new InvalidOperationException("Blood resource type is unavailable.");
             var bloodBefore = Convert.ToInt32(InvokeInstance(townData, "GetRes", bloodType) ?? 0, CultureInfo.InvariantCulture);
-            // The native counter deliberately excludes the mandatory level-1
-            // base-skill point. ResetTalentPoint keeps that point, so summing
-            // TalentData levels makes a successful reset look like it failed.
-            var spentBefore = GetResettableTalentPointCount(talentData, talents);
             if (spentBefore > 0 && bloodBefore < resetPrice)
             {
                 message = UiText.L($"초기화 재화 부족 · 필요 피 {resetPrice:N0} / 보유 {bloodBefore:N0}", $"Not enough Blood to reset · need {resetPrice:N0} / have {bloodBefore:N0}", $"重置资源不足 · 需要鲜血 {resetPrice:N0} / 持有 {bloodBefore:N0}", $"重設資源不足 · 需要鮮血 {resetPrice:N0} / 持有 {bloodBefore:N0}");
@@ -2281,33 +2887,115 @@ internal static class GameInventoryReader
             var transform = Plugin.AutoTransformSkills.Value && Plugin.AutoTransformMaxAttempts.Value > 0
                 ? TransformMissingPreferredSkills(hero, talentData, townData, preferred, spentBefore > 0 ? resetPrice : 0, Math.Clamp(Plugin.AutoTransformMaxAttempts.Value, 0, 50))
                 : new SkillTransformResult(0, 0, 0, 0, string.Empty, true);
+            journalTransformAttempts = transform.Attempts;
+            journalTransformBlood = transform.SpentBlood;
+            var transformBloodText = transform.SpentBlood >= 0
+                ? transform.SpentBlood.ToString("N0", CultureInfo.CurrentCulture)
+                : UiText.L("확인 불가", "unknown", "未知", "未知");
             talents = ReadValues(Read(talentData, "talentDic"))
                 .DistinctBy(value => NativeObjectKey(value, value)).ToList();
+            if (!transform.ExecutionSucceeded)
+            {
+                Plugin.DiagWarning($"AUTO-SKILLS TRANSFORM ERROR|attempts={transform.Attempts}|matched={transform.Matched}|target={transform.Target}|spentBlood={transform.SpentBlood}|cleanup={transform.CleanupSucceeded}|reason={transform.Note}");
+                message = UiText.L(
+                    $"스킬 변환 중 오류가 발생해 특성 초기화를 중단했습니다 · 성공 변환 {transform.Attempts}회 · 변환 피 {transformBloodText} · 현재 스킬 행은 이미 바뀌었을 수 있습니다{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}",
+                    $"Talent reset was stopped after a skill-transformation error · {transform.Attempts} successful transform(s) · transform Blood {transformBloodText} · current skill rows may already have changed{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}",
+                    $"技能转换出错，已停止天赋重置 · 成功转换 {transform.Attempts} 次 · 转换鲜血 {transformBloodText} · 当前技能行可能已发生变化{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}",
+                    $"技能轉換發生錯誤，已停止天賦重設 · 成功轉換 {transform.Attempts} 次 · 轉換鮮血 {transformBloodText} · 目前技能列可能已變更{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}");
+                return false;
+            }
             if (Plugin.AutoTransformSkills.Value && transform.Target > 0 && transform.Matched < transform.Target)
             {
-                Plugin.Logger.LogWarning($"AUTO-SKILLS TRANSFORM INCOMPLETE|attempts={transform.Attempts}|matched={transform.Matched}|target={transform.Target}|spentBlood={transform.SpentBlood}|reason={transform.Note}");
+                Plugin.DiagWarning($"AUTO-SKILLS TRANSFORM INCOMPLETE|attempts={transform.Attempts}|matched={transform.Matched}|target={transform.Target}|spentBlood={transform.SpentBlood}|reason={transform.Note}");
+                message = UiText.L(
+                    $"추천 스킬 변환이 완료되지 않아 특성 초기화를 중단했습니다 · {transform.Matched}/{transform.Target} · 변환 피 {transform.SpentBlood:N0}{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}",
+                    $"Talent reset was stopped because skill transformation was incomplete · {transform.Matched}/{transform.Target} · transform Blood {transform.SpentBlood:N0}{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}",
+                    $"技能转换未完成，已停止天赋重置 · {transform.Matched}/{transform.Target} · 转换鲜血 {transform.SpentBlood:N0}{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}",
+                    $"技能轉換未完成，已停止天賦重設 · {transform.Matched}/{transform.Target} · 轉換鮮血 {transform.SpentBlood:N0}{(string.IsNullOrWhiteSpace(transform.Note) ? string.Empty : $" · {transform.Note}")}");
+                return false;
+            }
+            if (!transform.CleanupSucceeded)
+            {
+                message = UiText.L(
+                    $"스킬 변환 임시 설정을 완전히 복구하지 못해 특성 초기화를 중단했습니다 · 성공 변환 {transform.Attempts}회 · 변환 피 {transformBloodText} · 현재 스킬 행은 이미 바뀌었을 수 있습니다.",
+                    $"Talent reset was stopped because temporary transformation settings were not restored · {transform.Attempts} successful transform(s) · transform Blood {transformBloodText} · current skill rows may already have changed.",
+                    $"未能完整恢复技能转换临时设置，已停止天赋重置 · 成功转换 {transform.Attempts} 次 · 转换鲜血 {transformBloodText} · 当前技能行可能已发生变化。",
+                    $"未能完整復原技能轉換暫存設定，已停止天賦重設 · 成功轉換 {transform.Attempts} 次 · 轉換鮮血 {transformBloodText} · 目前技能列可能已變更。");
+                return false;
             }
 
-            var resetResult = spentBefore > 0
+            // Transformation changes the active rows. Resolve the real post-wash
+            // nodes and ensure each required node can accept at least one saved
+            // point before consuming the reset cost.
+            gridById = BuildTalentGridById(talents);
+            var postTransformActive = ResolvePreferredActiveSkills(preferred, gridById);
+            var unresolvedAfterTransform = selectedActiveSkillIds
+                .Where(id => postTransformActive.All(entry => entry.SkillId != id)).ToList();
+            var postTransformMasteryIds = preResetGuideMasteryIds
+                .Where(gridById.ContainsKey)
+                .Where(id => !IsTalentLockedRequired(gridById[id]))
+                .ToList();
+            var noPointCapacityIds = postTransformActive.Select(entry => entry.Talent)
+                .Concat(postTransformMasteryIds.Select(id => gridById[id]))
+                .Where(talent => GetTalentLevelCap(talent) - GetTalentBaseLevelRequired(talent) < 1)
+                .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0)
+                .Where(id => id > 0).Distinct().ToList();
+            if (unresolvedAfterTransform.Count > 0 || postTransformMasteryIds.Count != preResetGuideMasteryIds.Count || noPointCapacityIds.Count > 0)
+            {
+                message = UiText.L(
+                    $"추천 노드 사전 검증 실패 · 미확인 스킬 {string.Join(',', unresolvedAfterTransform)} · 포인트 불가 {string.Join(',', noPointCapacityIds)}. 특성 초기화하지 않았습니다. 변환 피 {transform.SpentBlood:N0}",
+                    $"Guide-node preflight failed · unresolved skills {string.Join(',', unresolvedAfterTransform)} · cannot receive points {string.Join(',', noPointCapacityIds)}. Talent reset was not performed. Transform Blood {transform.SpentBlood:N0}",
+                    $"推荐节点预检失败 · 未确认技能 {string.Join(',', unresolvedAfterTransform)} · 无法加点 {string.Join(',', noPointCapacityIds)}。未重置天赋。转换鲜血 {transform.SpentBlood:N0}",
+                    $"推薦節點預檢失敗 · 未確認技能 {string.Join(',', unresolvedAfterTransform)} · 無法加點 {string.Join(',', noPointCapacityIds)}。未重設天賦。轉換鮮血 {transform.SpentBlood:N0}");
+                return false;
+            }
+
+            journalResetInvoked = spentBefore > 0;
+            var resetResult = journalResetInvoked
                 ? Convert.ToInt32(InvokeRequiredInstance(talentData, "ResetTalentPoint") ?? 1, CultureInfo.InvariantCulture)
                 : 0;
             if (resetResult != 0)
             {
-                message = UiText.L($"특성 초기화 실패 · 필요 피 {resetPrice:N0} / 보유 {bloodBefore:N0}", $"Talent reset failed · need {resetPrice:N0} Blood / have {bloodBefore:N0}", $"天赋重置失败 · 需要鲜血 {resetPrice:N0} / 持有 {bloodBefore:N0}", $"天賦重設失敗 · 需要鮮血 {resetPrice:N0} / 持有 {bloodBefore:N0}");
+                message = UiText.L($"특성 초기화 실패 · 필요 피 {resetPrice:N0} / 보유 {bloodBefore:N0}", $"Talent reset failed · need {resetPrice:N0} Blood / have {bloodBefore:N0}", $"天赋重置失败 · 需要鲜血 {resetPrice:N0} / 持有 {bloodBefore:N0}", $"天賦重設失敗 · 需要鮮血 {resetPrice:N0} / 持有 {bloodBefore:N0}")
+                          + DescribeSkillMutationJournal(journalTransformAttempts, journalTransformBlood, journalResetInvoked, false, journalResetPrice, false, -1, journalSaveHero);
                 return false;
             }
+            journalResetSucceeded = journalResetInvoked;
             var remainAfterReset = ReadNullableInt(saveHero, "talentRemainPoint") ?? 0;
+            journalAllocationStart = remainAfterReset;
             talents = ReadValues(Read(talentData, "talentDic"))
                 .DistinctBy(value => NativeObjectKey(value, value)).ToList();
             gridById = BuildTalentGridById(talents);
             var spentAfter = GetResettableTalentPointCount(talentData, talents);
             if (spentBefore > 0 && spentAfter != 0)
             {
-                message = UiText.L("특성 초기화가 적용되지 않았습니다. 현재 게임 상태에서 초기화할 수 없습니다.", "Talent reset was not applied in the current game state.", "当前游戏状态下无法重置天赋。", "目前遊戲狀態下無法重設天賦。");
+                message = UiText.L("초기화 함수는 성공을 반환했지만 일부 포인트가 남았습니다.", "The reset function returned success, but invested points remain.", "重置函数返回成功，但仍有已投入点数。", "重設函式回傳成功，但仍有已投入點數。")
+                          + DescribeSkillMutationJournal(journalTransformAttempts, journalTransformBlood, journalResetInvoked, journalResetSucceeded, journalResetPrice, journalBaseChanged, journalAllocationStart, journalSaveHero);
+                return false;
+            }
+            // Native ResetTalentPoint recalculates blessTalentPoint from the
+            // current milestone state, then SaveHeroData.ResetTalentPoint sets
+            // talentRemainPoint to GetTotalTalentPoint().  The old
+            // remainBefore + spentBefore check could therefore reject a valid
+            // reset after it had already consumed Blood.  Verify against the
+            // same native total that the reset itself uses.
+            var expectedRemainAfterReset = Convert.ToInt32(
+                InvokeRequiredInstance(saveHero, "GetTotalTalentPoint")
+                ?? throw new InvalidOperationException("The native total talent point value is unavailable."),
+                CultureInfo.InvariantCulture);
+            if (remainAfterReset != expectedRemainAfterReset)
+            {
+                message = UiText.L(
+                    $"특성 초기화 포인트 검증 실패 · 예상 {expectedRemainAfterReset:N0} / 실제 {remainAfterReset:N0}",
+                    $"Talent reset point verification failed · expected {expectedRemainAfterReset:N0} / actual {remainAfterReset:N0}",
+                    $"天赋重置点数验证失败 · 预期 {expectedRemainAfterReset:N0} / 实际 {remainAfterReset:N0}",
+                    $"天賦重設點數驗證失敗 · 預期 {expectedRemainAfterReset:N0} / 實際 {remainAfterReset:N0}")
+                          + DescribeSkillMutationJournal(journalTransformAttempts, journalTransformBlood, journalResetInvoked, journalResetSucceeded, journalResetPrice, journalBaseChanged, journalAllocationStart, journalSaveHero);
                 return false;
             }
 
             var baseSkillChanged = ApplyPreferredBaseSkill(talentData, saveHero, preferred, out var baseSkillName);
+            journalBaseChanged = baseSkillChanged;
             talents = ReadValues(Read(talentData, "talentDic"))
                 .DistinctBy(value => NativeObjectKey(value, value)).ToList();
             gridById = BuildTalentGridById(talents);
@@ -2322,18 +3010,24 @@ internal static class GameInventoryReader
                 .Where(id => id > 0).Distinct().ToList();
             var activeSkills = ResolvePreferredActiveSkills(preferred, gridById);
             var activeSkillTalentIds = activeSkills.Select(entry => entry.TalentId).ToList();
-            var availablePreferredSkillIds = activeSkills.Select(entry => entry.SkillId).ToHashSet();
-            var unresolvedPreferredSkillIds = desiredActiveSkillIds.Where(id => !availablePreferredSkillIds.Contains(id)).ToList();
+            var availableActiveSkillIds = activeSkills.Select(entry => entry.SkillId).ToHashSet();
+            var availableBaseSkillTalentIds = preferred.SkillTalentIds
+                .Where(id => IsBaseSkillDefinition(InvokeStatic("TableData", "getTTalentData", id)))
+                .Where(gridById.ContainsKey).ToList();
+            var availableBaseSkillIds = availableBaseSkillTalentIds
+                .Select(id => ReadNullableInt(InvokeStatic("TableData", "getTTalentData", id), "skillId") ?? 0)
+                .Where(id => id > 0);
+            var availablePreferredSkillIds = availableActiveSkillIds.Concat(availableBaseSkillIds).ToHashSet();
+            var unresolvedPreferredSkillIds = desiredActiveSkillIds.Where(id => !availableActiveSkillIds.Contains(id)).ToList();
             LogPreferredActiveSkillState("RESOLVED", activeSkills, unresolvedPreferredSkillIds);
             var relevantMasteryTalentIds = preferred.MasteryTalentIds
                 .Where(id => (ReadNullableInt(InvokeStatic("TableData", "getTTalentData", id), "type") ?? 0) == 2)
                 .Where(gridById.ContainsKey)
-                .Where(id => !ReadBool(InvokeInstance(gridById[id], "IsLock")))
-                .Where(id => IsMasteryRelevantToSkills(gridById[id], availablePreferredSkillIds))
+                .Where(id => !IsTalentLockedRequired(gridById[id]))
                 .ToList();
             var effectivePreferred = preferred with
             {
-                SkillTalentIds = activeSkillTalentIds,
+                SkillTalentIds = availableBaseSkillTalentIds.Concat(activeSkillTalentIds).Distinct().ToList(),
                 MasteryTalentIds = relevantMasteryTalentIds,
                 PreferredSkillIds = availablePreferredSkillIds
             };
@@ -2357,16 +3051,18 @@ internal static class GameInventoryReader
             {
                 if ((ReadNullableInt(saveHero, "talentRemainPoint") ?? 0) <= 0) break;
                 var talent = gridById[talentId];
-                if (GetTalentLevel(talent) > 0) continue;
+                if (GetSavedTalentLevel(talent) > 0) continue;
                 if (!TrySpendTalentPoints(talentData, saveHero, talent, 1, out var spent)) failedNodes.Add(talentId);
                 allocatedByPlan += spent;
             }
 
-            // 3) Choose the primary skill by direct mastery synergy and its
-            // effective build score, rather than assuming array order means DPS.
-            var primaryTalentId = activeSkillTalentIds
-                .OrderByDescending(id => CountMasteriesForSkill(relevantMasteryTalentIds, gridById, ReadNullableInt(Read(gridById[id], "tTalentData"), "skillId") ?? 0))
-                .ThenByDescending(id => ScoreTalent(gridById[id], focus, effectivePreferred))
+            // 3) Choose the primary skill from the official guide order plus
+            // theme/text evidence. Mastery effectType 4 rows are display metadata:
+            // native GetMasteryEffect applies only type 1 attributes and type 3
+            // abilities, so treating type 4 as direct skill synergy was unsound.
+            var primaryTalentId = availableBaseSkillTalentIds.Concat(activeSkillTalentIds).Distinct()
+                .OrderByDescending(id => ScoreTalent(gridById[id], focus, effectivePreferred))
+                .ThenBy(id => preferred.SkillTalentIds.IndexOf(id) is var index && index >= 0 ? index : int.MaxValue)
                 .FirstOrDefault();
             if (primaryTalentId > 0)
                 allocatedByPlan += SpendTalentToCap(talentData, saveHero, gridById[primaryTalentId], failedNodes);
@@ -2378,13 +3074,6 @@ internal static class GameInventoryReader
                 allocatedByPlan += SpendTalentToCap(talentData, saveHero, gridById[talentId], failedNodes);
             }
 
-            foreach (var talentId in activeSkillTalentIds.Where(id => id != primaryTalentId))
-            {
-                if ((ReadNullableInt(saveHero, "talentRemainPoint") ?? 0) <= 0) break;
-                if (gridById.TryGetValue(talentId, out var talent))
-                    allocatedByPlan += SpendTalentToCap(talentData, saveHero, talent, failedNodes);
-            }
-
             // 4) Spend leftovers on the single best currently available node at
             // a time. Maxing a useful node before moving on avoids round-robin
             // equal distribution while native AddTalentPoint verifies each spend.
@@ -2393,7 +3082,7 @@ internal static class GameInventoryReader
             {
                 var best = gridById.Values
                     .Where(talent => !failedNodes.Contains(ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0))
-                    .Where(CanAddTalentPoint)
+                    .Where(talent => CanAutoAllocateTalent(talent, hero, effectivePreferred))
                     .OrderByDescending(talent => ScoreTalent(talent, focus, effectivePreferred))
                     .ThenBy(talent => ReadNullableInt(Read(talent, "tTalentData"), "floor") ?? int.MaxValue)
                     .FirstOrDefault();
@@ -2420,53 +3109,188 @@ internal static class GameInventoryReader
                 .Concat(unlearnedPreferredSkillIds).Where(id => id > 0).Distinct().ToList();
             LogPreferredActiveSkillState("ALLOCATED", activeSkills, unresolvedPreferredSkillIds);
             if (unlearnedPreferredSkillIds.Count > 0)
-                Plugin.Logger.LogWarning($"AUTO-SKILLS ACTIVE UNLEARNED|skills={string.Join(',', unlearnedPreferredSkillIds)}|remaining={ReadNullableInt(saveHero, "talentRemainPoint") ?? 0}");
+                Plugin.DiagWarning($"AUTO-SKILLS ACTIVE UNLEARNED|skills={string.Join(',', unlearnedPreferredSkillIds)}|remaining={ReadNullableInt(saveHero, "talentRemainPoint") ?? 0}");
 
             var remaining = ReadNullableInt(saveHero, "talentRemainPoint") ?? 0;
             var allocated = Math.Max(0, beforeAllocation - remaining);
             if (allocated <= 0 && beforeAllocation > 0)
             {
-                message = UiText.L("초기화는 완료됐지만 현재 레벨에서 배분 가능한 특성이 없습니다.", "Reset completed, but no talent can receive points at the current level.", "重置已完成，但当前等级没有可分配的天赋。", "重設已完成，但目前等級沒有可分配的天賦。");
+                message = UiText.L("초기화는 완료됐지만 현재 레벨에서 배분 가능한 특성이 없습니다.", "Reset completed, but no talent can receive points at the current level.", "重置已完成，但当前等级没有可分配的天赋。", "重設已完成，但目前等級沒有可分配的天賦。")
+                          + DescribeSkillMutationJournal(journalTransformAttempts, journalTransformBlood, journalResetInvoked, journalResetSucceeded, journalResetPrice, journalBaseChanged, journalAllocationStart, journalSaveHero);
                 return false;
             }
 
             InvokeRequiredInstance(talentData, "ReapplySkillVariantsFromEquippedItems");
-            var variantSkillIds = VerifyEquippedSkillVariants(hero, talentData, "AUTO-SKILLS");
+            var usableSkillIds = ReadList(InvokeRequiredInstance(talentData, "GetSkillList"))
+                .Select(skill => ReadNullableInt(Read(skill, "tSkillData"), "id") ?? 0)
+                .Where(id => id > 0).ToHashSet();
+            var learnedButUnavailableSkillIds = activeSkills
+                .Where(entry => GetSavedTalentLevel(entry.Talent) > 0 && !usableSkillIds.Contains(entry.SkillId))
+                .Select(entry => entry.SkillId).Distinct().ToList();
+            if (learnedButUnavailableSkillIds.Count > 0)
+            {
+                missingPreferredSkillIds = missingPreferredSkillIds.Concat(learnedButUnavailableSkillIds).Distinct().ToList();
+                Plugin.DiagWarning($"AUTO-SKILLS ACTIVE UNAVAILABLE|skills={string.Join(',', learnedButUnavailableSkillIds)}");
+            }
+            var hasUnusableSkill = ReadBool(InvokeRequiredInstance(talentData, "IsHasUnusableSkill"));
+            var variantVerification = VerifyEquippedSkillVariants(hero, talentData, "AUTO-SKILLS");
+            var variantSkillIds = variantVerification.Actual;
+            var desiredBaseTalentId = preferred.SkillTalentIds
+                .FirstOrDefault(id => IsBaseSkillDefinition(InvokeStatic("TableData", "getTTalentData", id)));
+            var actualBaseTalentId = ReadNullableInt(saveHero, "baseSkillId") ?? 0;
+            var desiredBaseDefinition = desiredBaseTalentId > 0
+                ? InvokeStatic("TableData", "getTTalentData", desiredBaseTalentId)
+                : null;
+            var desiredBaseSkillId = ReadNullableInt(desiredBaseDefinition, "skillId") ?? 0;
+            var actualBaseSkill = InvokeRequiredInstance(hero, "GetNowBaseSkillData");
+            var actualBaseSkillId = ReadNullableInt(Read(actualBaseSkill, "tSkillData"), "id") ?? 0;
+            var desiredBaseSavedLevel = desiredBaseTalentId > 0 && gridById.TryGetValue(desiredBaseTalentId, out var desiredBaseTalent)
+                ? GetSavedTalentLevel(desiredBaseTalent)
+                : 0;
+            var baseSkillVerified = desiredBaseTalentId <= 0
+                                    || (actualBaseTalentId == desiredBaseTalentId
+                                        && desiredBaseSkillId > 0
+                                        && actualBaseSkillId == desiredBaseSkillId);
+            if (!baseSkillVerified)
+                Plugin.DiagWarning($"AUTO-SKILLS BASE MISMATCH|talent={actualBaseTalentId}/{desiredBaseTalentId}|skill={actualBaseSkillId}/{desiredBaseSkillId}|savedLevel={desiredBaseSavedLevel}");
+            var unlearnedMasteryTalentIds = relevantMasteryTalentIds
+                .Where(id => gridById.TryGetValue(id, out var talent) && GetSavedTalentLevel(talent) <= 0)
+                .Distinct().ToList();
+            if (unlearnedMasteryTalentIds.Count > 0)
+                Plugin.DiagWarning($"AUTO-SKILLS MASTERY UNLEARNED|talents={string.Join(',', unlearnedMasteryTalentIds)}|remaining={remaining}");
+            var transformComplete = transform.Matched >= transform.Target;
+            // The action is advertised as automatic allocation, so any unspent
+            // point makes the result partial—even if the only remaining native
+            // targets are active skills deliberately excluded from this guide.
+            // Do not report a focused subset as a fully completed allocation.
+            var unspentPointsRemain = remaining > 0;
+            var allocationLedgerExact = allocated == allocatedByPlan;
             var totalSpentBlood = Math.Max(0, bloodBefore - Convert.ToInt32(InvokeRequiredInstance(townData, "GetRes", bloodType) ?? bloodBefore, CultureInfo.InvariantCulture));
             var resetSpentBlood = Math.Max(0, totalSpentBlood - transform.SpentBlood);
-            Plugin.Logger.LogInfo($"AUTO-SKILLS PLAN|focus={focus.English}|build={preferred.BuildName}|transform={transform.Attempts}:{transform.Matched}/{transform.Target}|transformNote={transform.Note}|baseSkillChanged={baseSkillChanged}:{baseSkillName}|variants={string.Join(',', variantSkillIds)}|allocated={allocated}|planned={allocatedByPlan}|remaining={remaining}|failedNodes={string.Join(',', failedNodes)}");
+            var resetBloodVerified = spentBefore > 0 ? resetSpentBlood == resetPrice : resetSpentBlood == 0;
+            Plugin.DiagInfo($"AUTO-SKILLS PLAN|focus={focus.English}|build={preferred.BuildName}|transform={transform.Attempts}:{transform.Matched}/{transform.Target}|transformNote={transform.Note}|baseSkillChanged={baseSkillChanged}:{baseSkillName}|baseTalent={actualBaseTalentId}/{desiredBaseTalentId}|baseSkill={actualBaseSkillId}/{desiredBaseSkillId}|baseSaved={desiredBaseSavedLevel}|usableSkills={string.Join(',', usableSkillIds.OrderBy(id => id))}|hasUnusableSkill={hasUnusableSkill}|variants={string.Join(',', variantSkillIds)}|variantExact={variantVerification.IsExact}|allocated={allocated}|planned={allocatedByPlan}|ledgerExact={allocationLedgerExact}|remaining={remaining}|unspent={unspentPointsRemain}|resetBlood={resetSpentBlood}/{(spentBefore > 0 ? resetPrice : 0)}|unlearnedMasteries={string.Join(',', unlearnedMasteryTalentIds)}|failedNodes={string.Join(',', failedNodes)}");
             var transformKo = transform.Target > 0 ? $" · 스킬 변환{(transform.Matched < transform.Target ? " 일부" : string.Empty)} {transform.Attempts}회({transform.Matched}/{transform.Target})" : string.Empty;
             var transformEn = transform.Target > 0 ? $" · {(transform.Matched < transform.Target ? "partially " : string.Empty)}transformed {transform.Attempts}× ({transform.Matched}/{transform.Target})" : string.Empty;
             var transformZh = transform.Target > 0 ? $" · 技能{(transform.Matched < transform.Target ? "部分" : string.Empty)}转换 {transform.Attempts} 次（{transform.Matched}/{transform.Target}）" : string.Empty;
-            var variantKo = variantSkillIds.Count > 0 ? $" · 장비 변환형 {variantSkillIds.Count}개 적용" : string.Empty;
-            var variantEn = variantSkillIds.Count > 0 ? $" · {variantSkillIds.Count} gear variants applied" : string.Empty;
-            var variantZh = variantSkillIds.Count > 0 ? $" · 已应用 {variantSkillIds.Count} 个装备变体" : string.Empty;
+            var variantKo = variantVerification.Expected.Count > 0 || variantSkillIds.Count > 0 ? $" · 장비 변환형 {variantSkillIds.Count}/{variantVerification.Expected.Count} 확인" : string.Empty;
+            var variantEn = variantVerification.Expected.Count > 0 || variantSkillIds.Count > 0 ? $" · gear variants verified {variantSkillIds.Count}/{variantVerification.Expected.Count}" : string.Empty;
+            var variantZh = variantVerification.Expected.Count > 0 || variantSkillIds.Count > 0 ? $" · 装备变体验证 {variantSkillIds.Count}/{variantVerification.Expected.Count}" : string.Empty;
             var transformNote = LocalizeTransformNote(transform.Note);
             var transformNoteSuffix = string.IsNullOrWhiteSpace(transformNote) ? string.Empty : $" · {transformNote}";
-            var completionKo = missingPreferredSkillIds.Count > 0
-                ? $"추천 액티브 스킬 학습 미완료({string.Join(',', missingPreferredSkillIds)})"
-                : transform.CleanupSucceeded ? "스킬 집중 분배 완료" : "스킬 배분 완료 · 임시 설정 복구 확인 필요";
-            var completionEn = missingPreferredSkillIds.Count > 0
-                ? $"Recommended active skills not fully learned ({string.Join(',', missingPreferredSkillIds)})"
-                : transform.CleanupSucceeded ? "Focused skill allocation complete" : "Skill allocation complete · temporary-setting recovery needs attention";
-            var completionZhCn = missingPreferredSkillIds.Count > 0
-                ? $"推荐主动技能未全部学习（{string.Join(',', missingPreferredSkillIds)}）"
-                : transform.CleanupSucceeded ? "技能集中分配完成" : "技能分配完成 · 请检查临时设置恢复";
-            var completionZhTw = missingPreferredSkillIds.Count > 0
-                ? $"推薦主動技能未全部學習（{string.Join(',', missingPreferredSkillIds)}）"
-                : transform.CleanupSucceeded ? "技能集中分配完成" : "技能分配完成 · 請檢查臨時設定復原";
+            var incompleteKo = new List<string>();
+            var incompleteEn = new List<string>();
+            var incompleteZhCn = new List<string>();
+            var incompleteZhTw = new List<string>();
+            if (missingPreferredSkillIds.Count > 0)
+            {
+                incompleteKo.Add($"추천 액티브 미학습 {string.Join(',', missingPreferredSkillIds)}");
+                incompleteEn.Add($"active skills not learned {string.Join(',', missingPreferredSkillIds)}");
+                incompleteZhCn.Add($"主动技能未学习 {string.Join(',', missingPreferredSkillIds)}");
+                incompleteZhTw.Add($"主動技能未學習 {string.Join(',', missingPreferredSkillIds)}");
+            }
+            if (!transformComplete)
+            {
+                incompleteKo.Add($"변환 목표 {transform.Matched}/{transform.Target}");
+                incompleteEn.Add($"transform target {transform.Matched}/{transform.Target}");
+                incompleteZhCn.Add($"转换目标 {transform.Matched}/{transform.Target}");
+                incompleteZhTw.Add($"轉換目標 {transform.Matched}/{transform.Target}");
+            }
+            if (!baseSkillVerified)
+            {
+                incompleteKo.Add($"기본 스킬 {actualBaseTalentId}/{desiredBaseTalentId}");
+                incompleteEn.Add($"base skill {actualBaseTalentId}/{desiredBaseTalentId}");
+                incompleteZhCn.Add($"基础技能 {actualBaseTalentId}/{desiredBaseTalentId}");
+                incompleteZhTw.Add($"基礎技能 {actualBaseTalentId}/{desiredBaseTalentId}");
+            }
+            if (unlearnedMasteryTalentIds.Count > 0)
+            {
+                incompleteKo.Add($"추천 마스터리 미학습 {string.Join(',', unlearnedMasteryTalentIds)}");
+                incompleteEn.Add($"masteries not learned {string.Join(',', unlearnedMasteryTalentIds)}");
+                incompleteZhCn.Add($"专精未学习 {string.Join(',', unlearnedMasteryTalentIds)}");
+                incompleteZhTw.Add($"專精未學習 {string.Join(',', unlearnedMasteryTalentIds)}");
+            }
+            if (!variantVerification.IsExact)
+            {
+                incompleteKo.Add($"장비 변환형 불일치 -{string.Join(',', variantVerification.Missing)} +{string.Join(',', variantVerification.Unexpected)}");
+                incompleteEn.Add($"gear variant mismatch -{string.Join(',', variantVerification.Missing)} +{string.Join(',', variantVerification.Unexpected)}");
+                incompleteZhCn.Add($"装备变体不匹配 -{string.Join(',', variantVerification.Missing)} +{string.Join(',', variantVerification.Unexpected)}");
+                incompleteZhTw.Add($"裝備變體不符 -{string.Join(',', variantVerification.Missing)} +{string.Join(',', variantVerification.Unexpected)}");
+            }
+            if (hasUnusableSkill)
+            {
+                incompleteKo.Add("현재 무기로 사용할 수 없는 학습 스킬 있음");
+                incompleteEn.Add("a learned skill is unusable with the current weapons");
+                incompleteZhCn.Add("当前武器无法使用某个已学习技能");
+                incompleteZhTw.Add("目前武器無法使用某個已學習技能");
+            }
+            if (failedNodes.Count > 0)
+            {
+                incompleteKo.Add($"포인트 적용 실패 {string.Join(',', failedNodes)}");
+                incompleteEn.Add($"point application failed {string.Join(',', failedNodes)}");
+                incompleteZhCn.Add($"点数应用失败 {string.Join(',', failedNodes)}");
+                incompleteZhTw.Add($"點數套用失敗 {string.Join(',', failedNodes)}");
+            }
+            if (!allocationLedgerExact)
+            {
+                incompleteKo.Add($"포인트 원장 불일치 {allocated}/{allocatedByPlan}");
+                incompleteEn.Add($"point ledger mismatch {allocated}/{allocatedByPlan}");
+                incompleteZhCn.Add($"点数记录不匹配 {allocated}/{allocatedByPlan}");
+                incompleteZhTw.Add($"點數記錄不符 {allocated}/{allocatedByPlan}");
+            }
+            if (!resetBloodVerified)
+            {
+                incompleteKo.Add($"초기화 피 검증 실패 {resetSpentBlood}/{(spentBefore > 0 ? resetPrice : 0)}");
+                incompleteEn.Add($"reset Blood mismatch {resetSpentBlood}/{(spentBefore > 0 ? resetPrice : 0)}");
+                incompleteZhCn.Add($"重置鲜血不匹配 {resetSpentBlood}/{(spentBefore > 0 ? resetPrice : 0)}");
+                incompleteZhTw.Add($"重設鮮血不符 {resetSpentBlood}/{(spentBefore > 0 ? resetPrice : 0)}");
+            }
+            if (unspentPointsRemain)
+            {
+                incompleteKo.Add($"미사용 포인트 {remaining}");
+                incompleteEn.Add($"{remaining} points remain unspent");
+                incompleteZhCn.Add($"仍有 {remaining} 点未分配");
+                incompleteZhTw.Add($"仍有 {remaining} 點未分配");
+            }
+            if (!transform.CleanupSucceeded)
+            {
+                incompleteKo.Add("임시 신전 설정 복구 실패");
+                incompleteEn.Add("temporary shrine settings were not restored");
+                incompleteZhCn.Add("临时神殿设置未恢复");
+                incompleteZhTw.Add("臨時神殿設定未復原");
+            }
+            var verifiedComplete = incompleteEn.Count == 0;
+            var completionKo = verifiedComplete ? "스킬 집중 분배 검증 완료" : $"일부 적용 · {string.Join("; ", incompleteKo)}";
+            var completionEn = verifiedComplete ? "Focused skill allocation verified" : $"Partially applied · {string.Join("; ", incompleteEn)}";
+            var completionZhCn = verifiedComplete ? "技能集中分配验证完成" : $"部分应用 · {string.Join("; ", incompleteZhCn)}";
+            var completionZhTw = verifiedComplete ? "技能集中分配驗證完成" : $"部分套用 · {string.Join("; ", incompleteZhTw)}";
             message = UiText.L(
                 $"{completionKo} · {focus.Localized} · {preferred.BuildName}{transformKo}{variantKo} · {allocated:N0}포인트 · 변환 피 {transform.SpentBlood:N0} / 초기화 피 {resetSpentBlood:N0}{(remaining > 0 ? $" · 미사용 {remaining:N0}" : string.Empty)}{transformNoteSuffix}",
                 $"{completionEn} · {focus.English} · {preferred.BuildName}{transformEn}{variantEn} · {allocated:N0} points · transform Blood {transform.SpentBlood:N0} / reset Blood {resetSpentBlood:N0}{(remaining > 0 ? $" · {remaining:N0} unspent" : string.Empty)}{transformNoteSuffix}",
                 $"{completionZhCn} · {focus.Localized} · {preferred.BuildName}{transformZh}{variantZh} · {allocated:N0} 点 · 转换鲜血 {transform.SpentBlood:N0} / 重置鲜血 {resetSpentBlood:N0}{(remaining > 0 ? $" · 剩余 {remaining:N0}" : string.Empty)}{transformNoteSuffix}",
                 $"{completionZhTw} · {focus.Localized} · {preferred.BuildName}{transformZh}{variantZh} · {allocated:N0} 點 · 轉換鮮血 {transform.SpentBlood:N0} / 重設鮮血 {resetSpentBlood:N0}{(remaining > 0 ? $" · 剩餘 {remaining:N0}" : string.Empty)}{transformNoteSuffix}");
-            return transform.CleanupSucceeded && missingPreferredSkillIds.Count == 0;
+            return verifiedComplete;
         }
         catch (Exception error)
         {
-            message = UiText.L($"스킬 자동 분배 실패: {error.GetBaseException().Message}", $"Skill allocation failed: {error.GetBaseException().Message}", $"技能自动分配失败：{error.GetBaseException().Message}", $"技能自動分配失敗：{error.GetBaseException().Message}");
+            message = UiText.L($"스킬 자동 분배 실패: {error.GetBaseException().Message}", $"Skill allocation failed: {error.GetBaseException().Message}", $"技能自动分配失败：{error.GetBaseException().Message}", $"技能自動分配失敗：{error.GetBaseException().Message}")
+                      + DescribeSkillMutationJournal(journalTransformAttempts, journalTransformBlood, journalResetInvoked, journalResetSucceeded, journalResetPrice, journalBaseChanged, journalAllocationStart, journalSaveHero);
             return false;
         }
+    }
+
+    private static string DescribeSkillMutationJournal(int transformAttempts, int transformBlood, bool resetInvoked,
+        bool resetSucceeded, int resetPrice, bool baseChanged, int allocationStart, object? saveHero)
+    {
+        var allocated = allocationStart >= 0 && saveHero is not null
+            ? Math.Max(0, allocationStart - (ReadNullableInt(saveHero, "talentRemainPoint") ?? allocationStart))
+            : 0;
+        if (transformAttempts <= 0 && !resetInvoked && !baseChanged && allocated <= 0) return string.Empty;
+        var transformText = transformBlood >= 0 ? transformBlood.ToString("N0", CultureInfo.CurrentCulture) : UiText.L("확인 불가", "unknown", "未知", "未知");
+        return UiText.L(
+            $" · 변경 기록: 스킬 변환 {transformAttempts}회/피 {transformText}, 초기화 {(resetInvoked ? resetSucceeded ? $"성공(예상 피 {resetPrice:N0})" : "호출됨·성공 미확인" : "안 함")}, 기본 스킬 {(baseChanged ? "변경" : "유지")}, 확인된 배분 {allocated:N0}포인트",
+            $" · mutation record: transforms {transformAttempts}/Blood {transformText}, reset {(resetInvoked ? resetSucceeded ? $"succeeded (expected Blood {resetPrice:N0})" : "invoked; success unverified" : "not run")}, base skill {(baseChanged ? "changed" : "unchanged")}, verified allocation {allocated:N0} point(s)",
+            $" · 变更记录：技能转换 {transformAttempts} 次/鲜血 {transformText}，重置 {(resetInvoked ? resetSucceeded ? $"成功（预计鲜血 {resetPrice:N0}）" : "已调用·成功未确认" : "未执行")}，基础技能{(baseChanged ? "已更改" : "未更改")}，已确认分配 {allocated:N0} 点",
+            $" · 變更記錄：技能轉換 {transformAttempts} 次/鮮血 {transformText}，重設 {(resetInvoked ? resetSucceeded ? $"成功（預計鮮血 {resetPrice:N0}）" : "已呼叫·成功未確認" : "未執行")}，基礎技能{(baseChanged ? "已變更" : "未變更")}，已確認分配 {allocated:N0} 點");
     }
 
     private static object? GetSelectedHero()
@@ -2520,7 +3344,8 @@ internal static class GameInventoryReader
         try
         {
             var talentData = Read(hero, "heroTalentData");
-            var activeTalents = ReadValues(Read(talentData, "talentDic")).Concat(ReadList(Read(talentData, "extraTalentList")))
+            var activeTalents = ReadValues(Read(talentData, "talentDic")).Concat(
+                    ReadList(Read(talentData, "extraTalentList")).Where(talent => !ReadBool(Read(talent, "isRuneWords"))))
                 .DistinctBy(value => NativeObjectKey(value, value));
             foreach (var talent in activeTalents)
             {
@@ -2536,7 +3361,10 @@ internal static class GameInventoryReader
                 activeParts.Add(EnglishText(info, "_des", string.Empty) ?? string.Empty);
                 activeParts.Add(EnglishName(mastery, string.Empty) ?? string.Empty);
                 foreach (var affix in ReadList(Read(masteryData, "affixList")))
-                    activeParts.Add(GetAffixSearchText(affix));
+                {
+                    var effectType = ReadNullableInt(Read(affix, "tAffixData"), "effectType") ?? 0;
+                    if (effectType is 1 or 3) activeParts.Add(GetAffixSearchText(affix));
+                }
             }
         }
         catch { }
@@ -2576,12 +3404,9 @@ internal static class GameInventoryReader
             return new HeroFocus("elemental", UiText.L("원소·주문", "Elemental / Spell", "元素/法术", "元素/法術"), "Elemental / Spell", ElementalWords);
         if (phyEvidence > eleEvidence + 1)
             return new HeroFocus("physical", UiText.L("물리·무예", "Physical / Martial", "物理/武技", "物理/武技"), "Physical / Martial", PhysicalWords);
-        var phyAttack = ReadHeroAttr(hero, 1);
-        var eleAttack = ReadHeroAttr(hero, 2);
-        if (eleAttack > phyAttack * 1.08d)
-            return new HeroFocus("elemental", UiText.L("원소·주문", "Elemental / Spell", "元素/法术", "元素/法術"), "Elemental / Spell", ElementalWords);
-        if (phyAttack > eleAttack * 1.08d)
-            return new HeroFocus("physical", UiText.L("물리·무예", "Physical / Martial", "物理/武技", "物理/武技"), "Physical / Martial", PhysicalWords);
+        // Live AttrData includes the currently equipped gear. Using it as the
+        // last tie-break made Auto focus circular (old Lightning gear could keep
+        // selecting Lightning). With no clear job/skill evidence, stay neutral.
         return new HeroFocus("hybrid", UiText.L("균형·혼합", "Balanced / Hybrid", "均衡/混合", "均衡/混合"), "Balanced / Hybrid", PhysicalWords.Concat(ElementalWords).ToArray());
     }
 
@@ -2604,8 +3429,12 @@ internal static class GameInventoryReader
         var builds = ReadValues(ReadStatic("TableData", "TBuildsDict"))
             .Where(build => ReadNullableInt(build, "jobId") == jobId).ToList();
         if (builds.Count == 0) return null;
-        var unlocked = builds.Where(build => !ReadBool(Read(build, "isLock"))).ToList();
-        if (unlocked.Count > 0) builds = unlocked;
+        var unlocked = builds.Where(build => !ReadRequiredBoolProperty(build, "isLock")).ToList();
+        // A locked guide can describe skills, rows or equipment the current
+        // hero cannot legally use. Never select one merely because no guide is
+        // unlocked yet.
+        builds = unlocked;
+        if (builds.Count == 0) return null;
 
         var saveHero = Read(hero, "saveHeroData");
         var baseTalentId = ReadNullableInt(saveHero, "baseSkillId") ?? 0;
@@ -2614,10 +3443,10 @@ internal static class GameInventoryReader
             .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0)
             .Where(id => id > 0).ToHashSet();
 
-        return builds.Select(build =>
+        var ranked = builds.Select(build =>
             {
-                var skillIds = ReadSequence(Read(build, "skillArr")).Select(ToInt).Where(id => id > 0).ToList();
-                var masteryIds = ReadSequence(Read(build, "masteryArr")).Select(ToInt).Where(id => id > 0).ToList();
+                var skillIds = ReadRequiredSequenceProperty(build, "skillArr").Select(ToInt).Where(id => id > 0).ToList();
+                var masteryIds = ReadRequiredSequenceProperty(build, "masteryArr").Select(ToInt).Where(id => id > 0).ToList();
                 var guideIds = skillIds.Concat(masteryIds).ToHashSet();
                 var textParts = new List<string>
                 {
@@ -2629,17 +3458,31 @@ internal static class GameInventoryReader
                 foreach (var talentId in guideIds)
                     textParts.Add(GetTalentDefinitionText(InvokeStatic("TableData", "getTTalentData", talentId)));
                 var text = Clean(string.Join(" ", textParts)).ToLowerInvariant();
-                var score = KeywordScore(text, focus.Keywords) * (focus.IsManual ? 900d : 520d);
-                score += guideIds.Count(invested.Contains) * 1150d;
+                var themeEvidence = KeywordScore(text, focus.Keywords);
+                var score = themeEvidence * (focus.IsManual ? 1500d : 520d);
+                // A manually selected theme is an instruction to change builds.
+                // Letting the currently invested nodes dominate here creates a
+                // circular choice (for example, an old Lightning setup keeps
+                // winning after the user explicitly selects Fire). In Auto mode
+                // the existing build remains useful evidence for choosing among
+                // otherwise similar guides.
+                if (!focus.IsManual) score += guideIds.Count(invested.Contains) * 1150d;
                 var buildBaseIds = skillIds.Where(id => IsBaseSkillDefinition(InvokeStatic("TableData", "getTTalentData", id))).ToHashSet();
-                if (baseTalentId > 0 && buildBaseIds.Contains(baseTalentId)) score += 3600d;
-                else if (baseTalentId > 0 && buildBaseIds.Count > 0) score -= focus.IsManual ? 450d : 2600d;
+                if (!focus.IsManual && baseTalentId > 0 && buildBaseIds.Contains(baseTalentId)) score += 3600d;
+                else if (!focus.IsManual && baseTalentId > 0 && buildBaseIds.Count > 0) score -= 2600d;
                 score -= (ReadNullableInt(build, "index") ?? 0) * 0.01d;
-                return (Build: build, Score: score);
+                return (Build: build, Score: score, ThemeEvidence: themeEvidence);
             })
             .OrderByDescending(entry => entry.Score)
             .ThenBy(entry => ReadNullableInt(entry.Build, "index") ?? int.MaxValue)
-            .Select(entry => entry.Build).FirstOrDefault();
+            .ToList();
+        var winner = ranked.FirstOrDefault();
+        // A manual theme is an explicit constraint. Returning the first guide
+        // on a zero-keyword tie used to label unrelated guides as Fire/Defense
+        // and then reset the hero around a build that did not support the
+        // selected theme.
+        if (winner.Build is null || (focus.IsManual && winner.ThemeEvidence <= 0)) return null;
+        return winner.Build;
     }
 
     private static PreferredTalentPlan GetPreferredTalentPlan(object hero, HeroFocus focus)
@@ -2647,10 +3490,10 @@ internal static class GameInventoryReader
         var build = GetPreferredBuild(hero, focus);
         var skillTalentIds = build is null
             ? new List<int>()
-            : ReadSequence(Read(build, "skillArr")).Select(ToInt).Where(id => id > 0).Distinct().ToList();
+            : ReadRequiredSequenceProperty(build, "skillArr").Select(ToInt).Where(id => id > 0).Distinct().ToList();
         var masteryTalentIds = build is null
             ? new List<int>()
-            : ReadSequence(Read(build, "masteryArr")).Select(ToInt).Where(id => id > 0).Distinct().ToList();
+            : ReadRequiredSequenceProperty(build, "masteryArr").Select(ToInt).Where(id => id > 0).Distinct().ToList();
         var preferredSkillIds = skillTalentIds
             .Select(id => InvokeStatic("TableData", "getTTalentData", id))
             .Select(row => ReadNullableInt(row, "skillId") ?? 0)
@@ -2659,6 +3502,494 @@ internal static class GameInventoryReader
             ? UiText.L("사용자 빌드", "Custom build", "自定义流派", "自訂流派")
             : Clean(ReadString(build, "name") ?? EnglishName(build, UiText.L("추천 빌드", "Recommended build", "推荐流派", "推薦流派")) ?? UiText.L("추천 빌드", "Recommended build", "推荐流派", "推薦流派"));
         return new PreferredTalentPlan(build, skillTalentIds, masteryTalentIds, preferredSkillIds, buildName);
+    }
+
+    private static PreferredTalentPlan GetPerformanceTalentPlan(object hero, HeroFocus focus, int totalTalentPoints)
+    {
+        var saveHero = ReadRequiredProperty(hero, "saveHeroData")
+                       ?? throw new InvalidOperationException("SaveHeroData is unavailable.");
+        var jobId = ReadRequiredIntProperty(saveHero, "jobId");
+        if (jobId <= 0) throw new InvalidOperationException("The hero job ID is unavailable.");
+
+        var talentData = ReadRequiredProperty(hero, "heroTalentData")
+                         ?? throw new InvalidOperationException("HeroTalentData is unavailable.");
+        var gridTalents = ReadValues(ReadRequiredProperty(talentData, "talentDic"))
+            .DistinctBy(talent => NativeObjectKey(talent, talent)).ToList();
+        var gridById = BuildTalentGridById(gridTalents);
+
+        // Native GetSkillTalentList uses every same-job, type-1, non-base row.
+        // Official builds do not define shrine eligibility and receive no skill
+        // score bonus. Their mastery arrays are retained only as a deterministic
+        // zero-weight tie-break between otherwise equal native candidates.
+        var unlockedBuilds = ReadValues(ReadStatic("TableData", "TBuildsDict"))
+            .Where(build => (ReadNullableInt(build, "jobId") ?? 0) == jobId)
+            .Where(build => !ReadRequiredBoolProperty(build, "isLock"))
+            .ToList();
+        var catalogueMasteryTalentIds = unlockedBuilds
+            .SelectMany(build => ReadRequiredSequenceProperty(build, "masteryArr"))
+            .Select(ToInt).Where(id => id > 0).ToHashSet();
+
+        var baseRows = gridTalents
+            .Where(talent => !IsTalentLockedRequired(talent))
+            .Select(talent => Read(talent, "tTalentData"))
+            .Where(IsBaseSkillDefinition).Cast<object>()
+            .Where(row => IsSkillCompatibleWithEquippedWeapons(hero, ReadNullableInt(row, "skillId") ?? 0))
+            .Where(row => MatchesManualSkillTheme(hero, row, focus))
+            .DistinctBy(row => ReadNullableInt(row, "id") ?? 0)
+            .ToList();
+
+        var currentActiveTalents = GetTransformableTalents(talentData)
+            .Where(talent => !IsTalentLockedRequired(talent)).ToList();
+        var fixedSkillIds = currentActiveTalents.Where(IsTalentUnreplaceable)
+            .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "skillId") ?? 0)
+            .Where(id => id > 0).ToHashSet();
+        var currentActiveTalentIds = currentActiveTalents
+            .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0)
+            .Where(id => id > 0).ToHashSet();
+        var preservedTalentIds = GetTransformableTalents(talentData)
+            .Where(IsTalentUnreplaceable)
+            .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0)
+            .Where(id => id > 0).ToHashSet();
+        var heroLevel = ReadRequiredIntProperty(saveHero, "level");
+        var activeRows = ReadValues(ReadStatic("TableData", "TTalentDict"))
+            .Where(IsTransformableSkillDefinition).Cast<object>()
+            .Where(row => (ReadNullableInt(row, "jobId") ?? 0) == jobId)
+            .Where(row =>
+            {
+                var id = ReadNullableInt(row, "id") ?? 0;
+                if (id <= 0 || (preservedTalentIds.Contains(id) && !currentActiveTalentIds.Contains(id))) return false;
+                // Native FillActiveSkillTalentDicGaps applies this one special
+                // restriction to the first slot of a level-one hero.
+                return heroLevel > 1 || currentActiveTalentIds.Contains(id) || (ReadNullableInt(row, "floor") ?? 0) == 1;
+            })
+            .Where(row =>
+            {
+                var skillId = ReadNullableInt(row, "skillId") ?? 0;
+                return fixedSkillIds.Contains(skillId)
+                       || (IsSkillCompatibleWithEquippedWeapons(hero, skillId)
+                           && MatchesManualSkillTheme(hero, row, focus));
+            })
+            .GroupBy(row => ReadNullableInt(row, "skillId") ?? 0)
+            .Where(group => group.Key > 0)
+            .Select(group => group.OrderByDescending(row => currentActiveTalentIds.Contains(ReadNullableInt(row, "id") ?? 0))
+                .ThenBy(row => ReadNullableInt(row, "index") ?? int.MaxValue).First())
+            .ToList();
+        if (baseRows.Count == 0 || activeRows.Count == 0)
+            throw new InvalidOperationException($"No compatible unlocked performance skill pool is available (base={baseRows.Count}, active={activeRows.Count}).");
+
+        var currentBaseTalentId = ReadRequiredIntProperty(saveHero, "baseSkillId");
+        var profile = BuildHeroEffectProfile(hero, focus);
+        var objectiveAttr = CreateTalentNeutralObjectiveAttr(hero, gridTalents);
+        const int defaultSkillLevel = 1;
+        var objectiveScores = baseRows.Concat(activeRows).ToDictionary(
+            row => ReadNullableInt(row, "id") ?? 0,
+            row => ScoreSkillDefinitionForObjective(hero, row, focus, profile, currentBaseTalentId, defaultSkillLevel, objectiveAttr));
+        var selectedBase = baseRows
+            .OrderByDescending(row => objectiveScores[ReadNullableInt(row, "id") ?? 0])
+            .ThenBy(row => ReadNullableInt(row, "index") ?? int.MaxValue)
+            .First();
+        var selectedBaseId = ReadNullableInt(selectedBase, "id") ?? 0;
+        var skillTalentIds = new[] { selectedBaseId }
+            .Concat(activeRows.OrderByDescending(row => objectiveScores[ReadNullableInt(row, "id") ?? 0])
+                .Select(row => ReadNullableInt(row, "id") ?? 0))
+            .Where(id => id > 0).Distinct().ToList();
+        var skillIds = skillTalentIds.Select(id => InvokeStatic("TableData", "getTTalentData", id))
+            .Select(row => ReadNullableInt(row, "skillId") ?? 0).Where(id => id > 0).ToHashSet();
+        var objectiveSkillIds = new[] { ReadNullableInt(selectedBase, "skillId") ?? 0 }
+            .Concat(activeRows.OrderByDescending(row => objectiveScores[ReadNullableInt(row, "id") ?? 0])
+                .Take(Math.Max(1, currentActiveTalents.Count))
+                .Select(row => ReadNullableInt(row, "skillId") ?? 0))
+            .Where(id => id > 0).Distinct().ToList();
+
+        var masteryRows = gridTalents
+            .Where(talent => !IsTalentLockedRequired(talent))
+            .Where(talent => (ReadNullableInt(Read(talent, "tTalentData"), "type") ?? 0) == 2)
+            .Where(talent => (ReadNullableInt(Read(talent, "tTalentData"), "masteryId") ?? 0) > 0)
+            .ToList();
+        var masteryTargetCount = Math.Clamp(totalTalentPoints - currentActiveTalents.Count, 0, 6);
+        var masteryTalentIds = masteryRows
+            .Select(talent =>
+            {
+                var id = ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0;
+                var score = ScoreMasteryTalentForObjective(hero, talent, focus, objectiveAttr, objectiveSkillIds);
+                objectiveScores[id] = score;
+                return (Id: id, Score: score, Catalogue: catalogueMasteryTalentIds.Contains(id), Floor: ReadNullableInt(Read(talent, "tTalentData"), "floor") ?? int.MaxValue);
+            })
+            .Where(entry => entry.Id > 0 && double.IsFinite(entry.Score) && entry.Score > 0d)
+            .OrderByDescending(entry => entry.Score)
+            .ThenByDescending(entry => entry.Catalogue)
+            .ThenBy(entry => entry.Floor)
+            .Take(masteryTargetCount)
+            .Select(entry => entry.Id).ToList();
+        var label = UiText.L("성능 목표", "Performance objective", "性能目标", "效能目標");
+        Plugin.DiagInfo($"AUTO-SKILLS PERFORMANCE POOL|job={jobId}|focus={focus.English}|base={selectedBaseId}|activeCandidates={activeRows.Count}|scores={string.Join(',', skillTalentIds.Take(12).Select(id => $"{id}:{objectiveScores[id]:0.0}"))}");
+        return new PreferredTalentPlan(null, skillTalentIds, masteryTalentIds, skillIds, label, objectiveScores);
+    }
+
+    private static double ScoreSkillDefinitionForObjective(object hero, object definition, HeroFocus focus,
+        HeroEffectProfile profile, int currentBaseTalentId, int previewLevel, object objectiveAttr)
+    {
+        var talentId = ReadNullableInt(definition, "id") ?? 0;
+        var skillId = ReadNullableInt(definition, "skillId") ?? 0;
+        var text = GetTalentDefinitionText(definition).ToLowerInvariant();
+        var theme = KeywordScore(text, focus.Keywords);
+        var tank = KeywordScore(text, TankWords);
+        var support = KeywordScore(text, SupportWords);
+        var semantic = theme * 250d
+                       + tank * (focus.Key == "defense" ? 900d : 40d)
+                       + support * (focus.Key == "support" ? 700d : focus.Key == "defense" ? 180d : 30d);
+        if (!focus.IsManual && talentId == currentBaseTalentId) semantic += 50d;
+        try
+        {
+            var nativeRole = ReadNativeSkillRoleProfile(hero, skillId, Math.Max(1, previewLevel), objectiveAttr);
+            var rolePower = focus.Key switch
+            {
+                "defense" => Math.Log10(1d + Math.Max(0d, nativeRole.Shield * 1.5d + nativeRole.Heal)) * 9000d,
+                "support" => Math.Log10(1d + Math.Max(0d, nativeRole.Heal * 1.4d + nativeRole.Shield)) * 8500d,
+                "minion" when nativeRole.Summon => 6500d,
+                _ => 0d
+            };
+            var damage60s = nativeRole.DamageByType.Values.Where(value => value > 0d).Sum();
+            if (damage60s > 0d)
+            {
+                damage60s = GetManualDamageAmount(nativeRole.DamageByType, focus);
+                var weight = focus.Key is "defense" or "support" ? 1200d : 10000d;
+                return Math.Log10(1d + Math.Max(0d, damage60s)) * weight + rolePower + semantic;
+            }
+            if (rolePower > 0d) return rolePower + semantic;
+        }
+        catch (Exception error)
+        {
+            Plugin.DiagDebug($"AUTO-SKILLS OBJECTIVE PREVIEW FAILED|talent={talentId}|skill={skillId}|{error.GetBaseException().Message}");
+        }
+        return semantic;
+    }
+
+    private static bool MatchesManualSkillTheme(object hero, object definition, HeroFocus focus)
+    {
+        if (!focus.IsManual) return true;
+        var skillId = ReadNullableInt(definition, "skillId") ?? 0;
+        if (skillId <= 0) return false;
+        var text = GetTalentDefinitionText(definition).ToLowerInvariant();
+        var role = ReadNativeSkillRoleProfile(hero, skillId, 1);
+        var positive = role.DamageByType.Where(entry => entry.Value > 0d).ToList();
+        HashSet<int>? allowed = focus.Key switch
+        {
+            "physical" => new HashSet<int> { 1, 2, 3 },
+            "elemental" => new HashSet<int> { 4, 5, 6 },
+            "fire" => new HashSet<int> { 4 },
+            "ice" => new HashSet<int> { 5 },
+            "lightning" => new HashSet<int> { 6 },
+            "bleed" => new HashSet<int> { 7 },
+            "corrosion" => new HashSet<int> { 8 },
+            _ => null
+        };
+        if (allowed is not null && positive.Count > 0)
+        {
+            return positive.Any(entry => allowed.Contains(entry.Key) && entry.Value > 0d);
+        }
+
+        return focus.Key switch
+        {
+            "minion" => role.Summon || KeywordScore(text, focus.Keywords) > 0,
+            "crit" => positive.Count > 0 || KeywordScore(text, CriticalWords) > 0,
+            "defense" => role.Heal > 0d || role.Shield > 0d || KeywordScore(text, TankWords) > 0,
+            "support" => role.Heal > 0d || role.Shield > 0d || KeywordScore(text, SupportWords) > 0,
+            _ => KeywordScore(text, focus.Keywords) > 0
+        };
+    }
+
+    private static double GetManualDamageAmount(IReadOnlyDictionary<int, double> damageByType, HeroFocus focus)
+    {
+        var total = damageByType.Values.Where(value => value > 0d).Sum();
+        if (!focus.IsManual) return total;
+        HashSet<int>? allowed = focus.Key switch
+        {
+            "physical" => new HashSet<int> { 1, 2, 3 },
+            "elemental" => new HashSet<int> { 4, 5, 6 },
+            "fire" => new HashSet<int> { 4 },
+            "ice" => new HashSet<int> { 5 },
+            "lightning" => new HashSet<int> { 6 },
+            "bleed" => new HashSet<int> { 7 },
+            "corrosion" => new HashSet<int> { 8 },
+            _ => null
+        };
+        if (allowed is null) return total;
+        return damageByType.Where(entry => allowed.Contains(entry.Key) && entry.Value > 0d).Sum(entry => entry.Value);
+    }
+
+    private static NativeSkillRoleProfile ReadNativeSkillRoleProfile(object hero, int skillId, int level, object? attrOverride = null)
+    {
+        var damage = new Dictionary<int, double>();
+        if (skillId <= 0) return new NativeSkillRoleProfile(damage, 0d, 0d, false);
+        var attr = attrOverride ?? Read(hero, "attrData") ?? throw new InvalidOperationException("Hero AttrData is unavailable.");
+        var preview = InvokeRequiredStaticMany("SkillData", "CreatePreview", skillId, Math.Max(1, level), attr)
+                      ?? throw new InvalidOperationException($"SkillData.CreatePreview({skillId}) returned no skill.");
+        if (CurrentEquipmentEnablesSkillVariant(hero, skillId))
+            InvokeRequiredInstance(preview, "SetVariant", true);
+        var info = Read(preview, "tSkillInfoData") ?? throw new InvalidOperationException($"Skill {skillId} info is unavailable.");
+        var powerIds = ReadSequence(Read(info, "infoArr")).Select(ToInt).Where(id => id > 0)
+            .Select(id => InvokeStatic("TableData", "getTSkillExplainData", id))
+            .Where(explain => (ReadNullableInt(explain, "type") ?? -1) == 2)
+            .Select(explain => ReadSequence(Read(explain, "typeParam")).Select(ToInt).FirstOrDefault())
+            .Where(id => id > 0).Distinct().ToList();
+        var heal = 0d;
+        var shield = 0d;
+        foreach (var powerId in powerIds)
+        {
+            var power = InvokeRequiredStaticMany("PowerData", "CreateByShow", powerId, Math.Max(1, level), preview)
+                        ?? throw new InvalidOperationException($"PowerData.CreateByShow({powerId}) returned no power.");
+            var powerType = ReadNullableInt(Read(power, "tPowerData"), "type") ?? 0;
+            if (powerType == 1)
+            {
+                foreach (var entry in ReadEntries(Read(power, "dmgPowerDic")))
+                {
+                    var type = ToInt(Read(entry, "Key") ?? 0);
+                    var value = Convert.ToDouble(Read(entry, "Value") ?? 0d, CultureInfo.InvariantCulture);
+                    if (type <= 0 || !double.IsFinite(value) || value <= 0d) continue;
+                    damage[type] = damage.GetValueOrDefault(type) + value;
+                }
+            }
+            else if (powerType == 2)
+            {
+                var value = Convert.ToDouble(Read(power, "power") ?? 0d, CultureInfo.InvariantCulture);
+                if (double.IsFinite(value) && value > 0d) heal += value;
+            }
+            else if (powerType == 3)
+            {
+                var value = Convert.ToDouble(Read(power, "power") ?? 0d, CultureInfo.InvariantCulture);
+                if (double.IsFinite(value) && value > 0d) shield += value;
+            }
+        }
+        var previewAttr = Read(preview, "attrData") ?? attr;
+        var nativeSpeed = Convert.ToDouble(
+            InvokeRequiredInstance(previewAttr, "GetSkillSpeedRate", (object)null!) ?? 1d,
+            CultureInfo.InvariantCulture);
+        if (!double.IsFinite(nativeSpeed) || nativeSpeed <= 0d) nativeSpeed = 1d;
+        nativeSpeed = Math.Clamp(nativeSpeed, 0.05d, 20d);
+        var cooldown = Math.Max(0d, ReadAttrRequired(previewAttr, 2001));
+        if (ReadAttrRequired(previewAttr, 3001) > 0d) cooldown = 0d;
+        var castOpportunities = Math.Clamp(60d * nativeSpeed / (cooldown > 0.01d ? cooldown : 1d), 1d, 6000d);
+        var critChance = Math.Clamp(PercentRate(ReadAttrRequired(attr, 31)), 0d, 1d);
+        var critDamage = Math.Max(0.5d, 0.5d + PercentRate(ReadAttrRequired(attr, 37)));
+        foreach (var type in damage.Keys.ToList())
+        {
+            var critFactor = type is 7 or 8 ? 1d : Math.Max(0.1d, 1d + critChance * critDamage);
+            damage[type] *= castOpportunities * critFactor;
+        }
+        heal *= castOpportunities;
+        shield *= castOpportunities;
+        var summon = previewAttr is not null && (ReadAttrRequired(previewAttr, 6001) > 0d || ReadAttrRequired(previewAttr, 6002) > 0d);
+        return new NativeSkillRoleProfile(damage, heal, shield, summon);
+    }
+
+    private static double ScoreMasteryTalentForObjective(object hero, object talent, HeroFocus focus,
+        object objectiveAttr, IReadOnlyCollection<int> objectiveSkillIds)
+    {
+        var definition = Read(talent, "tTalentData") ?? throw new InvalidOperationException("Mastery talent definition is unavailable.");
+        var masteryId = ReadNullableInt(definition, "masteryId") ?? 0;
+        if (masteryId <= 0) return double.NegativeInfinity;
+        var cap = Math.Max(1, GetTalentLevelCap(talent));
+        var preview = InvokeRequiredStaticMany("MasteryData", "CreateByShow", masteryId, cap, cap)
+                      ?? throw new InvalidOperationException($"MasteryData.CreateByShow({masteryId}) returned no mastery.");
+        var baseline = InvokeRequiredStaticMany("AttrData", "copyCreate", objectiveAttr)
+                       ?? throw new InvalidOperationException("AttrData baseline copy failed.");
+        var simulated = InvokeRequiredStaticMany("AttrData", "copyCreate", objectiveAttr)
+                        ?? throw new InvalidOperationException("AttrData mastery copy failed.");
+        var texts = new List<string> { GetTalentDefinitionText(definition) };
+        foreach (var affix in ReadList(Read(preview, "affixList")))
+        {
+            var effectType = ReadNullableInt(Read(affix, "tAffixData"), "effectType") ?? 0;
+            if (effectType is 1 or 3) texts.Add(GetAffixSearchText(affix));
+            if (effectType == 1)
+                InvokeRequiredInstance(affix, "SetActiveAttrData", simulated, true);
+        }
+        var numericDelta = ScoreSkillPackageObjective(hero, objectiveSkillIds, simulated, focus)
+                           - ScoreSkillPackageObjective(hero, objectiveSkillIds, baseline, focus);
+        var text = Clean(string.Join(" ", texts)).ToLowerInvariant();
+        var semantic = KeywordScore(text, focus.Keywords) * 700d
+                       + KeywordScore(text, TankWords) * (focus.Key == "defense" ? 900d : 30d)
+                       + KeywordScore(text, SupportWords) * (focus.Key == "support" ? 800d : 35d);
+        return numericDelta * 1000d + semantic;
+    }
+
+    private static double ScoreSkillPackageObjective(object hero, IEnumerable<int> skillIds, object attrData, HeroFocus focus)
+    {
+        var score = ScoreHeroAttrObjective(attrData, focus);
+        foreach (var skillId in skillIds.Where(id => id > 0).Distinct())
+        {
+            var role = ReadNativeSkillRoleProfile(hero, skillId, 1, attrData);
+            var damage = GetManualDamageAmount(role.DamageByType, focus);
+            score += focus.Key switch
+            {
+                "defense" => Math.Log10(1d + role.Shield * 1.5d + role.Heal) * 3d + Math.Log10(1d + damage) * 0.4d,
+                "support" => Math.Log10(1d + role.Heal * 1.4d + role.Shield) * 3d + Math.Log10(1d + damage) * 0.35d,
+                "minion" => Math.Log10(1d + damage) * (role.Summon ? 2.5d : 0.5d),
+                _ => Math.Log10(1d + damage) * 2d
+            };
+        }
+        return score;
+    }
+
+    private static object CreateTalentNeutralObjectiveAttr(object hero, IEnumerable<object> gridTalents)
+    {
+        var live = Read(hero, "attrData") ?? throw new InvalidOperationException("Hero AttrData is unavailable.");
+        var clean = InvokeRequiredStaticMany("AttrData", "copyCreate", live)
+                    ?? throw new InvalidOperationException("AttrData talent-neutral copy failed.");
+        foreach (var talent in gridTalents)
+        {
+            var definition = Read(talent, "tTalentData");
+            if ((ReadNullableInt(definition, "type") ?? 0) != 2 || GetSavedTalentLevel(talent) <= 0) continue;
+            foreach (var affix in ReadList(Read(Read(talent, "masteryData"), "affixList")))
+            {
+                if ((ReadNullableInt(Read(affix, "tAffixData"), "effectType") ?? 0) != 1) continue;
+                InvokeRequiredInstance(affix, "SetActiveAttrData", clean, false);
+            }
+            // Reset removes only the saved investment. Equipment/inspiration
+            // baseLevel remains active, so restore that exact post-reset layer
+            // after removing the current effective mastery.
+            var baseLevel = Math.Min(GetTalentBaseLevelRequired(talent), GetTalentLevelCap(talent));
+            var masteryId = ReadNullableInt(definition, "masteryId") ?? 0;
+            if (baseLevel <= 0 || masteryId <= 0) continue;
+            var basePreview = InvokeRequiredStaticMany("MasteryData", "CreateByShow", masteryId, baseLevel, GetTalentLevelCap(talent))
+                              ?? throw new InvalidOperationException($"MasteryData.CreateByShow({masteryId}) returned no base-level mastery.");
+            foreach (var affix in ReadList(Read(basePreview, "affixList")))
+            {
+                if ((ReadNullableInt(Read(affix, "tAffixData"), "effectType") ?? 0) != 1) continue;
+                InvokeRequiredInstance(affix, "SetActiveAttrData", clean, true);
+            }
+        }
+        return clean;
+    }
+
+    private static double ScoreHeroAttrObjective(object attrData, HeroFocus focus)
+    {
+        var physical = Math.Max(0d, ReadAttrRequired(attrData, 1));
+        var elemental = Math.Max(0d, ReadAttrRequired(attrData, 2));
+        var attack = focus.Key is "physical" or "bleed" ? physical
+            : focus.Key is "elemental" or "fire" or "ice" or "lightning" or "corrosion" ? elemental
+            : Math.Max(physical, elemental);
+        var crit = Math.Max(0d, ReadAttrRequired(attrData, 31)) + Math.Max(0d, ReadAttrRequired(attrData, 37));
+        var hp = Math.Max(0d, ReadAttrRequired(attrData, 5));
+        var defence = Math.Max(0d, ReadAttrRequired(attrData, 3) + ReadAttrRequired(attrData, 4));
+        var sustain = Math.Max(0d, ReadAttrRequired(attrData, 7) + ReadAttrRequired(attrData, 9) + ReadAttrRequired(attrData, 93) + ReadAttrRequired(attrData, 94));
+        var support = Math.Max(0d, ReadAttrRequired(attrData, 81) + ReadAttrRequired(attrData, 82) + ReadAttrRequired(attrData, 191));
+        var minion = Math.Max(0d, ReadAttrRequired(attrData, 25) * 50d + ReadAttrRequired(attrData, 190));
+        return focus.Key switch
+        {
+            "defense" => Math.Log10(1d + hp + defence * 2d + sustain * 4d) * 3d + Math.Log10(1d + attack),
+            "support" => Math.Log10(1d + support * 10d) * 3d + Math.Log10(1d + hp + defence),
+            "minion" => Math.Log10(1d + minion) * 3d + Math.Log10(1d + attack),
+            "crit" => Math.Log10(1d + attack) * 2d + Math.Log10(1d + crit) * 2d,
+            _ => Math.Log10(1d + attack) * 2d + Math.Log10(1d + crit)
+        };
+    }
+
+    private static PreferredTalentPlan SelectPreferredActiveSkillTargets(object hero, object talentData, PreferredTalentPlan preferred, HeroFocus focus)
+    {
+        var desiredRows = preferred.SkillTalentIds
+            .Select((talentId, index) => (TalentId: talentId, Index: index, Definition: InvokeStatic("TableData", "getTTalentData", talentId)))
+            .Where(entry => IsTransformableSkillDefinition(entry.Definition))
+            .Select(entry => (entry.TalentId, entry.Index, Definition: entry.Definition!, SkillId: ReadNullableInt(entry.Definition, "skillId") ?? 0))
+            .Where(entry => entry.SkillId > 0)
+            .GroupBy(entry => entry.SkillId)
+            .Select(group => group.OrderBy(entry => entry.Index).First())
+            .ToList();
+        if (desiredRows.Count == 0) return preferred;
+
+        // ShrineWashData.WashHero delegates to HeroTalentData.ReCreateTalent.
+        // It can replace only currently unlocked, non-fixed active-skill rows;
+        // the number of usable rows grows with hero level and must be measured
+        // every run instead of being treated as a fixed four-slot loadout.
+        var current = GetTransformableTalents(talentData).ToList();
+        var unlocked = current.Where(talent => !IsTalentLockedRequired(talent)).ToList();
+        var allDesiredSkillIds = desiredRows.Select(entry => entry.SkillId).ToHashSet();
+        var fixedCurrentSkillIds = unlocked
+            .Where(IsTalentUnreplaceable)
+            .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "skillId") ?? 0)
+            .Where(id => id > 0).ToHashSet();
+        var fixedUnwantedRows = unlocked.Count(talent =>
+        {
+            if (!IsTalentUnreplaceable(talent)) return false;
+            var skillId = ReadNullableInt(Read(talent, "tTalentData"), "skillId") ?? 0;
+            return !allDesiredSkillIds.Contains(skillId);
+        });
+        var capacity = Math.Min(desiredRows.Count, Math.Max(0, unlocked.Count - fixedUnwantedRows));
+
+        var ranked = desiredRows.Select(entry =>
+        {
+            var definitionText = GetTalentDefinitionText(entry.Definition).ToLowerInvariant();
+            double focusMatches = KeywordScore(definitionText, focus.Keywords);
+            if (focus.Key == "defense")
+                focusMatches += KeywordScore(definitionText, TankWords) * 1.35d + KeywordScore(definitionText, SupportWords) * 0.75d;
+            else if (focus.Key == "support")
+                focusMatches += KeywordScore(definitionText, SupportWords) * 1.35d + KeywordScore(definitionText, TankWords) * 0.45d;
+            return (entry.TalentId, entry.Index, entry.SkillId,
+                Fixed: fixedCurrentSkillIds.Contains(entry.SkillId),
+                Objective: preferred.ObjectiveScores?.GetValueOrDefault(entry.TalentId) ?? 0d,
+                FocusMatches: focusMatches,
+                Compatible: IsSkillCompatibleWithEquippedWeapons(hero, entry.SkillId));
+        }).ToList();
+
+        var selectedRows = ranked
+            // Never discard a matching skill that the user explicitly fixed.
+            .OrderByDescending(entry => entry.Fixed)
+            .ThenByDescending(entry => entry.Compatible)
+            .ThenByDescending(entry => entry.Objective)
+            .ThenByDescending(entry => entry.FocusMatches)
+            .ThenBy(entry => entry.Index)
+            .Take(capacity)
+            .ToList();
+        var selectedSkillIds = selectedRows.Select(entry => entry.SkillId).ToHashSet();
+        var excludedSkillIds = desiredRows.Select(entry => entry.SkillId).Where(id => !selectedSkillIds.Contains(id)).ToList();
+        Plugin.DiagInfo(
+            $"AUTO-SKILLS TARGETS|unlocked={unlocked.Count}|fixedUnwanted={fixedUnwantedRows}|desired={string.Join(',', desiredRows.Select(entry => entry.SkillId))}|selected={string.Join(',', selectedRows.Select(entry => entry.SkillId))}|excluded={string.Join(',', excludedSkillIds)}");
+
+        // Keep base/non-washable skills, then order transformable targets by the
+        // same priority used above. The shrine can favorite only a limited
+        // number of missing rows; preserving the original guide order here used
+        // to put a cornerstone skill such as Divine Shelter last again.
+        var selectedTalentIds = preferred.SkillTalentIds
+            .Where(talentId => !IsTransformableSkillDefinition(InvokeStatic("TableData", "getTTalentData", talentId)))
+            .Concat(selectedRows.Select(entry => entry.TalentId))
+            .Distinct().ToList();
+        var selectedPreferredSkillIds = selectedTalentIds
+            .Select(talentId => InvokeStatic("TableData", "getTTalentData", talentId))
+            .Select(definition => ReadNullableInt(definition, "skillId") ?? 0)
+            .Where(skillId => skillId > 0).ToHashSet();
+        return preferred with
+        {
+            SkillTalentIds = selectedTalentIds,
+            // Keep the chosen base skill as well as the row-limited active
+            // skills. Base-skill-linked masteries are part of the guide synergy
+            // and must not disappear merely because the shrine cannot wash them.
+            PreferredSkillIds = selectedPreferredSkillIds
+        };
+    }
+
+    private static string GetBuildGuideText(object? build)
+    {
+        if (build is null) return string.Empty;
+        return Clean(string.Join(" ",
+            ReadString(build, "name") ?? string.Empty,
+            ReadString(build, "des") ?? string.Empty,
+            EnglishName(build, string.Empty) ?? string.Empty,
+            EnglishText(build, "_des", string.Empty) ?? string.Empty)).ToLowerInvariant();
+    }
+
+    private static bool BuildDirectlyMentionsSkill(string buildText, object skillTalentDefinition)
+    {
+        if (string.IsNullOrWhiteSpace(buildText)) return false;
+        var skillId = ReadNullableInt(skillTalentDefinition, "skillId") ?? 0;
+        var skill = skillId > 0 ? InvokeStatic("TableData", "getTSkillData", skillId) : null;
+        var names = new[]
+        {
+            ReadString(skillTalentDefinition, "name"), EnglishName(skillTalentDefinition, string.Empty),
+            ReadString(skill, "name"), EnglishName(skill, string.Empty)
+        };
+        return names.Select(name => Clean(name ?? string.Empty).ToLowerInvariant())
+            .Where(name => name.Length >= 2).Distinct()
+            .Any(buildText.Contains);
     }
 
     private static double ScoreTalent(object talent, HeroFocus focus, PreferredTalentPlan preferred)
@@ -2670,54 +4001,33 @@ internal static class GameInventoryReader
         var masteryData = Read(talent, "masteryData");
         var mastery = Read(masteryData, "tMasteryData") ?? (ReadNullableInt(definition, "masteryId") is > 0 and var masteryId ? InvokeStatic("TableData", "getTMasteryData", masteryId) : null);
         var textParts = new List<string> { GetTalentDefinitionText(definition), EnglishName(skillRow, string.Empty) ?? string.Empty, EnglishText(info, "_des", string.Empty) ?? string.Empty, EnglishName(mastery, string.Empty) ?? string.Empty };
-        var directMasteryMatches = 0;
         foreach (var affix in ReadList(Read(masteryData, "affixList")))
         {
-            textParts.Add(GetAffixSearchText(affix));
-            var affixDefinition = Read(affix, "tAffixData");
-            if ((ReadNullableInt(affixDefinition, "effectType") ?? 0) == 4)
-            {
-                var skillIds = ReadSequence(Read(affixDefinition, "effectParam")).Select(ToInt).Where(id => id > 0).ToHashSet();
-                if (skillIds.Overlaps(preferred.PreferredSkillIds)) directMasteryMatches++;
-            }
+            var effectType = ReadNullableInt(Read(affix, "tAffixData"), "effectType") ?? 0;
+            // Native MasteryData.GetMasteryEffect applies only attribute and
+            // ability affixes. Do not let display-only type 4 metadata reorder
+            // point allocation or automatic theme inference.
+            if (effectType is 1 or 3) textParts.Add(GetAffixSearchText(affix));
         }
         var text = Clean(string.Join(" ", textParts)).ToLowerInvariant();
         var id = ReadNullableInt(definition, "id") ?? 0;
         var skillKey = ReadNullableInt(definition, "skillId") ?? 0;
-        var skillGuideIndex = preferred.SkillTalentIds.IndexOf(id);
-        var masteryGuideIndex = preferred.MasteryTalentIds.IndexOf(id);
-        var guide = skillGuideIndex >= 0 ? 16000d - skillGuideIndex * 80d
-            : masteryGuideIndex >= 0 ? 13500d - masteryGuideIndex * 60d
-            : preferred.PreferredSkillIds.Contains(skillKey) ? 6200d : 0d;
+        var objective = preferred.ObjectiveScores?.GetValueOrDefault(id) ?? 0d;
+        if (objective <= 0d && skillKey > 0 && preferred.ObjectiveScores is not null)
+            objective = preferred.SkillTalentIds
+                .Where(talentId => (ReadNullableInt(InvokeStatic("TableData", "getTTalentData", talentId), "skillId") ?? 0) == skillKey)
+                .Select(talentId => preferred.ObjectiveScores.GetValueOrDefault(talentId))
+                .DefaultIfEmpty(0d).Max();
+        // Objective scores are already normalized logarithmic 60-second skill
+        // values or native attribute deltas. Keeping the raw ordering avoids the
+        // old 5,000-point clamp that made nearly every damaging skill tie.
+        var performance = Math.Max(0d, objective);
         var focusScore = KeywordScore(text, focus.Keywords) * (focus.IsManual ? 260d : 150d);
-        var directSkillScore = directMasteryMatches * 2600d;
         var utility = KeywordScore(text, SupportWords) * (focus.Key == "support" ? 180d : 24d)
                       + KeywordScore(text, TankWords) * (focus.Key == "defense" ? 160d : 16d);
         var floor = ReadNullableInt(definition, "floor") ?? 0;
-        return guide + focusScore + directSkillScore + utility - floor * 0.1d;
+        return performance + focusScore + utility - floor * 0.1d;
     }
-
-    private static HashSet<int> GetMasteryReferencedSkillIds(object masteryTalent)
-    {
-        var result = new HashSet<int>();
-        foreach (var affix in ReadList(Read(Read(masteryTalent, "masteryData"), "affixList")))
-        {
-            var definition = Read(affix, "tAffixData");
-            if ((ReadNullableInt(definition, "effectType") ?? 0) != 4) continue;
-            foreach (var id in ReadSequence(Read(definition, "effectParam")).Select(ToInt).Where(id => id > 0))
-                result.Add(id);
-        }
-        return result;
-    }
-
-    private static bool IsMasteryRelevantToSkills(object masteryTalent, HashSet<int> availableSkillIds)
-    {
-        var referenced = GetMasteryReferencedSkillIds(masteryTalent);
-        return referenced.Count == 0 || referenced.Overlaps(availableSkillIds);
-    }
-
-    private static int CountMasteriesForSkill(IEnumerable<int> masteryTalentIds, IReadOnlyDictionary<int, object> gridById, int skillId)
-        => skillId <= 0 ? 0 : masteryTalentIds.Count(id => gridById.TryGetValue(id, out var talent) && GetMasteryReferencedSkillIds(talent).Contains(skillId));
 
     private static string GetTalentDefinitionText(object? definition)
     {
@@ -2748,10 +4058,10 @@ internal static class GameInventoryReader
             .Where(group => group.Key > 0).ToList();
         var duplicates = groups.Where(group => group.Count() > 1).Select(group => group.Key).ToList();
         if (duplicates.Count > 0)
-            Plugin.Logger.LogWarning($"AUTO-SKILLS DUPLICATE TALENTS|ids={string.Join(',', duplicates)}");
+            Plugin.DiagWarning($"AUTO-SKILLS DUPLICATE TALENTS|ids={string.Join(',', duplicates)}");
         return groups.ToDictionary(
             group => group.Key,
-            group => group.OrderBy(talent => ReadBool(InvokeInstance(talent, "IsLock")) ? 1 : 0)
+            group => group.OrderBy(talent => IsTalentLockedRequired(talent) ? 1 : 0)
                 .ThenByDescending(GetTalentLevel).First());
     }
 
@@ -2766,7 +4076,7 @@ internal static class GameInventoryReader
             var desiredSkillId = ReadNullableInt(guideDefinition, "skillId") ?? 0;
             if (desiredSkillId <= 0 || !resolvedSkillIds.Add(desiredSkillId)) continue;
             var talent = gridById.Values
-                .Where(candidate => !ReadBool(InvokeInstance(candidate, "IsLock")))
+                .Where(candidate => !IsTalentLockedRequired(candidate))
                 .Where(candidate => (ReadNullableInt(Read(candidate, "tTalentData"), "skillId") ?? 0) == desiredSkillId)
                 .OrderBy(candidate => (ReadNullableInt(Read(candidate, "tTalentData"), "id") ?? 0) == guideTalentId ? 0 : 1)
                 .ThenBy(candidate => ReadNullableInt(Read(candidate, "tTalentData"), "id") ?? int.MaxValue)
@@ -2778,11 +4088,12 @@ internal static class GameInventoryReader
         return result;
     }
 
+    [Conditional("PATHOFIDLE_DIAGNOSTICS")]
     private static void LogPreferredActiveSkillState(string phase, IEnumerable<PreferredActiveSkill> activeSkills, IReadOnlyCollection<int> unresolvedSkillIds)
     {
         var states = activeSkills.Select(entry =>
-            $"guide={entry.GuideTalentId}/talent={entry.TalentId}/skill={entry.SkillId}/save={GetSavedTalentLevel(entry.Talent)}/base={ReadNullableInt(entry.Talent, "baseLevel") ?? 0}/effective={GetTalentLevel(entry.Talent)}/cap={GetTalentLevelCap(entry.Talent)}");
-        Plugin.Logger.LogInfo($"AUTO-SKILLS ACTIVE {phase}|{string.Join(" ; ", states)}|unresolved={string.Join(',', unresolvedSkillIds)}");
+            $"guide={entry.GuideTalentId}/talent={entry.TalentId}/skill={entry.SkillId}/save={GetSavedTalentLevel(entry.Talent)}/base={GetTalentBaseLevelRequired(entry.Talent)}/effective={GetTalentLevel(entry.Talent)}/cap={GetTalentLevelCap(entry.Talent)}");
+        Plugin.DiagInfo($"AUTO-SKILLS ACTIVE {phase}|{string.Join(" ; ", states)}|unresolved={string.Join(',', unresolvedSkillIds)}");
     }
 
     private static bool IsBaseSkillDefinition(object? definition)
@@ -2792,51 +4103,120 @@ internal static class GameInventoryReader
         => (ReadNullableInt(definition, "type") ?? 0) == 1 && (ReadNullableInt(definition, "miniType") ?? 0) != 1
            && (ReadNullableInt(definition, "skillId") ?? 0) > 0;
 
+    private static bool IsSkillCompatibleWithEquippedWeapons(object hero, int skillId)
+    {
+        if (skillId <= 0) return false;
+        var skill = InvokeStatic("TableData", "getTSkillData", skillId)
+                    ?? throw new InvalidOperationException($"Skill definition {skillId} is unavailable.");
+        var weaponArr = Read(skill, "weaponArr");
+        if (weaponArr is null) return true; // Native treats a null requirement as unrestricted.
+        var heroEquipData = Read(hero, "heroEquipData")
+                            ?? throw new InvalidOperationException("Hero equipment data is unavailable.");
+        // Pass the game's native array object back to the game's own matcher.
+        // It checks every equipped part-1 item (both weapon slots) and succeeds
+        // when any required weapon type matches.
+        return ReadBool(InvokeRequiredInstance(heroEquipData, "CheckHasWeaponTypeArr", weaponArr));
+    }
+
     private static int GetTalentLevel(object talent)
-        => Convert.ToInt32(InvokeInstance(talent, "GetLevel") ?? ReadNullableInt(Read(talent, "saveTalentData"), "level") ?? 0, CultureInfo.InvariantCulture);
+        => Convert.ToInt32(InvokeRequiredInstance(talent, "GetLevel")
+                           ?? throw new InvalidOperationException("The native talent level is unavailable."), CultureInfo.InvariantCulture);
 
     private static int GetSavedTalentLevel(object talent)
-        => Math.Max(0, ReadNullableInt(Read(talent, "saveTalentData"), "level") ?? 0);
+        => Math.Max(0, ReadRequiredIntProperty(
+            ReadRequiredProperty(talent, "saveTalentData") ?? throw new InvalidOperationException("SaveTalentData is unavailable."),
+            "level"));
 
     private static int GetTalentLevelCap(object talent)
-        => Convert.ToInt32(InvokeInstance(talent, "GetTalentLevelCap") ?? GetTalentLevel(talent), CultureInfo.InvariantCulture);
+        => Convert.ToInt32(InvokeRequiredInstance(talent, "GetTalentLevelCap")
+                           ?? throw new InvalidOperationException("The native talent level cap is unavailable."), CultureInfo.InvariantCulture);
+
+    private static int GetTalentBaseLevelRequired(object talent)
+        => Math.Max(0, ReadRequiredIntProperty(talent, "baseLevel"));
+
+    private static bool IsTalentFixedRequired(object talent)
+        => ReadRequiredBoolProperty(
+            ReadRequiredProperty(talent, "saveTalentData") ?? throw new InvalidOperationException("SaveTalentData is unavailable."),
+            "isFixed");
+
+    private static bool IsTalentAlienRequired(object talent)
+        => ReadRequiredBoolProperty(
+            ReadRequiredProperty(talent, "saveTalentData") ?? throw new InvalidOperationException("SaveTalentData is unavailable."),
+            "isAlien");
+
+    private static bool IsTalentUnreplaceable(object talent)
+        => IsTalentFixedRequired(talent) || IsTalentAlienRequired(talent);
 
     private static int GetSpentTalentPoints(object talent)
     {
-        var baseLevel = ReadNullableInt(talent, "baseLevel") ?? 0;
+        var baseLevel = GetTalentBaseLevelRequired(talent);
         return Math.Max(0, GetTalentLevel(talent) - baseLevel);
     }
 
     private static int GetResettableTalentPointCount(object talentData, IReadOnlyCollection<object> talents)
     {
+        _ = talents;
+        // ResetTalentPoint calls this same native counter. If its contract is
+        // unavailable, a save-data approximation is not a safe mutation gate.
+        var native = InvokeRequiredInstance(talentData, "GetAddTalentPointExcludeStick");
+        var count = Convert.ToInt32(native ?? throw new InvalidOperationException("Native talent-point count was null."), CultureInfo.InvariantCulture);
+        if (count >= 0) return count;
+        throw new InvalidOperationException($"Native talent-point count was negative ({count}).");
+    }
+
+    private static int PreviewExactTalentPointBudget(object talentData, object saveHero,
+        IReadOnlyCollection<object> talents, int spentBefore)
+    {
+        _ = talents;
+        if (spentBefore <= 0)
+            return Math.Max(0, ReadNullableInt(saveHero, "talentRemainPoint") ?? 0);
+
+        var blessBefore = ReadNullableInt(saveHero, "blessTalentPoint")
+                          ?? throw new InvalidOperationException("The saved blessing talent-point value is unavailable.");
+        int total;
         try
         {
-            var native = InvokeRequiredInstance(talentData, "GetAddTalentPointExcludeStick");
-            var count = Convert.ToInt32(native ?? throw new InvalidOperationException("Native talent-point count was null."), CultureInfo.InvariantCulture);
-            if (count >= 0) return count;
-            throw new InvalidOperationException($"Native talent-point count was negative ({count}).");
+            InvokeRequiredInstance(talentData, "RecalcBlessTalentPointByMilestones");
+            total = Convert.ToInt32(
+                InvokeRequiredInstance(saveHero, "GetTotalTalentPoint")
+                ?? throw new InvalidOperationException("The native total talent point value is unavailable."),
+                CultureInfo.InvariantCulture);
         }
-        catch (Exception error)
+        finally
         {
-            // Match the native loop as a version-tolerant fallback: it sums the
-            // saved levels, except that the job's mandatory base skill
-            // (type=1, miniType=1) contributes level-1.
-            Plugin.Logger.LogWarning($"Native resettable talent-point count unavailable; using save-data fallback: {error.GetBaseException().Message}");
-            return talents.Sum(talent =>
-            {
-                var level = Math.Max(0, ReadNullableInt(Read(talent, "saveTalentData"), "level") ?? 0);
-                var definition = Read(talent, "tTalentData");
-                var mandatoryBaseSkill = (ReadNullableInt(definition, "type") ?? 0) == 1
-                                         && (ReadNullableInt(definition, "miniType") ?? 0) == 1;
-                return mandatoryBaseSkill ? Math.Max(0, level - 1) : level;
-            });
+            Write(saveHero, "blessTalentPoint", blessBefore);
         }
+
+        if ((ReadNullableInt(saveHero, "blessTalentPoint") ?? int.MinValue) != blessBefore)
+            throw new InvalidOperationException("The blessing talent-point preview snapshot could not be restored.");
+        if (total < 0)
+            throw new InvalidOperationException($"The native total talent point value was negative ({total}).");
+        return total;
     }
 
     private static bool CanAddTalentPoint(object talent)
     {
         if (GetTalentLevel(talent) >= GetTalentLevelCap(talent)) return false;
-        return !ReadBool(InvokeInstance(talent, "IsLock"));
+        return !IsTalentLockedRequired(talent);
+    }
+
+    private static bool IsTalentLockedRequired(object talent)
+        => ReadBool(InvokeRequiredInstance(talent, "IsLock"));
+
+    private static bool CanAutoAllocateTalent(object talent, object hero, PreferredTalentPlan preferred)
+    {
+        if (!CanAddTalentPoint(talent)) return false;
+        var definition = Read(talent, "tTalentData");
+        if ((ReadNullableInt(definition, "type") ?? 0) != 1) return true;
+
+        // Active/base skill nodes are loadout choices, not generic places to
+        // dump leftover points. Restrict them to the selected game guide and
+        // prove their weapon requirement before spending anything on them.
+        var talentId = ReadNullableInt(definition, "id") ?? 0;
+        var skillId = ReadNullableInt(definition, "skillId") ?? 0;
+        if (!preferred.SkillTalentIds.Contains(talentId)
+            && (skillId <= 0 || !preferred.PreferredSkillIds.Contains(skillId))) return false;
+        return skillId > 0 && IsSkillCompatibleWithEquippedWeapons(hero, skillId);
     }
 
     private static bool TrySpendTalentPoints(object talentData, object saveHero, object talent, int requested, out int spent)
@@ -2844,20 +4224,23 @@ internal static class GameInventoryReader
         spent = 0;
         var beforeRemain = ReadNullableInt(saveHero, "talentRemainPoint") ?? 0;
         var beforeLevel = GetTalentLevel(talent);
+        var beforeSavedLevel = GetSavedTalentLevel(talent);
         var cap = GetTalentLevelCap(talent);
         var amount = Math.Min(Math.Max(0, requested), Math.Min(beforeRemain, Math.Max(0, cap - beforeLevel)));
         if (amount <= 0 || !CanAddTalentPoint(talent)) return false;
         var result = Convert.ToInt32(InvokeRequiredInstance(talentData, "AddTalentPoint", talent, amount) ?? 1, CultureInfo.InvariantCulture);
         var afterRemain = ReadNullableInt(saveHero, "talentRemainPoint") ?? beforeRemain;
         var afterLevel = GetTalentLevel(talent);
+        var afterSavedLevel = GetSavedTalentLevel(talent);
         var remainDelta = beforeRemain - afterRemain;
         var levelDelta = afterLevel - beforeLevel;
-        if (result == 0 && remainDelta == amount && levelDelta == amount)
+        var savedLevelDelta = afterSavedLevel - beforeSavedLevel;
+        if (result == 0 && remainDelta == amount && levelDelta == amount && savedLevelDelta == amount)
         {
             spent = amount;
             return true;
         }
-        Plugin.Logger.LogWarning($"AUTO-SKILLS ADD FAILED|talent={ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0}|code={result}|requested={amount}|remainDelta={remainDelta}|levelDelta={levelDelta}");
+        Plugin.DiagWarning($"AUTO-SKILLS ADD FAILED|talent={ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0}|code={result}|requested={amount}|remainDelta={remainDelta}|levelDelta={levelDelta}|savedLevelDelta={savedLevelDelta}");
         return false;
     }
 
@@ -2890,7 +4273,7 @@ internal static class GameInventoryReader
             .FirstOrDefault(talent => (ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0) == desiredTalentId);
         if (desiredTalent is null)
         {
-            Plugin.Logger.LogWarning($"AUTO-SKILLS BASE SKIPPED|talent={desiredTalentId}|reason=base skill is not present in the hero talent grid");
+            Plugin.DiagWarning($"AUTO-SKILLS BASE SKIPPED|talent={desiredTalentId}|reason=base skill is not present in the hero talent grid");
             return false;
         }
         InvokeRequiredInstance(talentData, "ChangeBaseSkill", desiredTalentId);
@@ -2915,18 +4298,17 @@ internal static class GameInventoryReader
             return new SkillTransformResult(0, 0, 0, 0, string.Empty, true);
 
         var current = GetTransformableTalents(talentData).ToList();
-        var unlockedSlots = current.Count(talent => !ReadBool(InvokeInstance(talent, "IsLock")));
+        var unlockedSlots = current.Count(talent => !IsTalentLockedRequired(talent));
         var originalFixedTalentIds = current
-            .Where(talent => ReadBool(Read(Read(talent, "saveTalentData"), "isFixed")))
+            .Where(IsTalentFixedRequired)
             .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0)
             .Where(id => id > 0).ToHashSet();
         var fixedUnwanted = current.Count(talent =>
         {
             var definition = Read(talent, "tTalentData");
-            var talentId = ReadNullableInt(definition, "id") ?? 0;
             var skillId = ReadNullableInt(definition, "skillId") ?? 0;
-            return !ReadBool(InvokeInstance(talent, "IsLock"))
-                   && originalFixedTalentIds.Contains(talentId) && !desiredSkillIds.Contains(skillId);
+            return !IsTalentLockedRequired(talent)
+                   && IsTalentUnreplaceable(talent) && !desiredSkillIds.Contains(skillId);
         });
         var target = Math.Min(desiredSkillIds.Count, Math.Max(0, unlockedSlots - fixedUnwanted));
         var matched = CountPreferredTransformedSkills(current, desiredSkillIds);
@@ -2946,11 +4328,11 @@ internal static class GameInventoryReader
         var bloodType = CreateEnum("EResType", 2) ?? throw new InvalidOperationException("Blood resource type is unavailable.");
         var bloodBefore = Convert.ToInt32(InvokeRequiredInstance(townData, "GetRes", bloodType) ?? throw new InvalidOperationException("Blood amount is unavailable."), CultureInfo.InvariantCulture);
         var previousSelectedHero = Read(houseData, "selectHeroData");
-        var likeSnapshot = ReadSequence(Read(Read(townData, "saveTownData"), "likeTalentList"))
-            .Select(ToInt).Where(id => id > 0).Distinct().ToList();
+        var likeSnapshot = ReadTalentLikesRequired(townData);
         var attempts = 0;
         var note = string.Empty;
         var cleanupSucceeded = true;
+        var executionSucceeded = true;
         try
         {
             Write(houseData, "selectHeroData", hero);
@@ -2964,8 +4346,14 @@ internal static class GameInventoryReader
                     var definition = Read(talent, "tTalentData");
                     var talentId = ReadNullableInt(definition, "id") ?? 0;
                     var skillId = ReadNullableInt(definition, "skillId") ?? 0;
-                    var shouldFix = originalFixedTalentIds.Contains(talentId) || desiredSkillIds.Contains(skillId);
-                    var isFixed = ReadBool(Read(Read(talent, "saveTalentData"), "isFixed"));
+                    // A desired skill in a locked row must not be temporarily
+                    // fixed: ReCreateTalent keeps that exact ID in its used set,
+                    // which would make it impossible to roll into an unlocked
+                    // slot. Preserve only the user's original lock there.
+                    var shouldFix = originalFixedTalentIds.Contains(talentId)
+                                    || (!IsTalentLockedRequired(talent) && !IsTalentAlienRequired(talent)
+                                        && desiredSkillIds.Contains(skillId));
+                    var isFixed = IsTalentFixedRequired(talent);
                     if (talentId > 0 && shouldFix != isFixed)
                         InvokeRequiredInstance(talentData, "SetTalentWashFixed", talentId, shouldFix);
                 }
@@ -2973,7 +4361,7 @@ internal static class GameInventoryReader
                 matched = CountPreferredTransformedSkills(current, desiredSkillIds);
                 if (matched >= target) break;
                 var currentSkillIds = current
-                    .Where(talent => !ReadBool(InvokeInstance(talent, "IsLock")))
+                    .Where(talent => !IsTalentLockedRequired(talent))
                     .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "skillId") ?? 0)
                     .Where(id => id > 0).ToHashSet();
                 var missingTalentIds = desiredTalentRows
@@ -2992,7 +4380,7 @@ internal static class GameInventoryReader
                 }
                 var price = Convert.ToInt32(InvokeRequiredInstance(washData, "GetWashPrice") ?? 0, CultureInfo.InvariantCulture);
                 var blood = Convert.ToInt32(InvokeRequiredInstance(townData, "GetRes", bloodType) ?? throw new InvalidOperationException("Blood amount is unavailable."), CultureInfo.InvariantCulture);
-                if (price <= 0 || blood < price + reservedBlood)
+                if (price < 0 || blood < price + reservedBlood)
                 {
                     note = "not enough Blood after reserving the reset cost";
                     break;
@@ -3010,6 +4398,12 @@ internal static class GameInventoryReader
             if (matched < target && string.IsNullOrWhiteSpace(note) && attempts >= maxAttempts)
                 note = "maximum transform attempts reached";
         }
+        catch (Exception error)
+        {
+            executionSucceeded = false;
+            note = AppendTransformNote(note, $"transform error: {error.GetBaseException().Message}");
+            Plugin.DiagWarning($"AUTO-SKILLS TRANSFORM THREW|attempts={attempts}|matched={matched}/{target}|{error.GetBaseException().Message}");
+        }
         finally
         {
             // Temporary locks only guide this automatic run. Restore the user's
@@ -3020,7 +4414,7 @@ internal static class GameInventoryReader
                 {
                     var talentId = ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0;
                     var shouldFix = originalFixedTalentIds.Contains(talentId);
-                    var isFixed = ReadBool(Read(Read(talent, "saveTalentData"), "isFixed"));
+                    var isFixed = IsTalentFixedRequired(talent);
                     if (talentId > 0 && shouldFix != isFixed)
                         InvokeRequiredInstance(talentData, "SetTalentWashFixed", talentId, shouldFix);
                 }
@@ -3028,25 +4422,25 @@ internal static class GameInventoryReader
                 {
                     cleanupSucceeded = false;
                     note = AppendTransformNote(note, "temporary fixed-skill state could not be fully restored");
-                    Plugin.Logger.LogWarning($"AUTO-SKILLS FIXED RESTORE FAILED|{error.GetBaseException().Message}");
+                    Plugin.DiagWarning($"AUTO-SKILLS FIXED RESTORE FAILED|{error.GetBaseException().Message}");
                 }
             }
             var restoredFixedTalentIds = GetTransformableTalents(talentData)
-                .Where(talent => ReadBool(Read(Read(talent, "saveTalentData"), "isFixed")))
+                .Where(IsTalentFixedRequired)
                 .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0)
                 .Where(id => id > 0).ToHashSet();
             if (!restoredFixedTalentIds.SetEquals(originalFixedTalentIds))
             {
                 cleanupSucceeded = false;
                 note = AppendTransformNote(note, "temporary fixed-skill state could not be fully restored");
-                Plugin.Logger.LogWarning($"AUTO-SKILLS FIXED RESTORE MISMATCH|expected={string.Join(',', originalFixedTalentIds)}|actual={string.Join(',', restoredFixedTalentIds)}");
+                Plugin.DiagWarning($"AUTO-SKILLS FIXED RESTORE MISMATCH|expected={string.Join(',', originalFixedTalentIds)}|actual={string.Join(',', restoredFixedTalentIds)}");
             }
             try { RestoreTalentLikes(townData, likeSnapshot); }
             catch (Exception error)
             {
                 cleanupSucceeded = false;
                 note = AppendTransformNote(note, "skill preferences could not be fully restored");
-                Plugin.Logger.LogWarning($"AUTO-SKILLS LIKES RESTORE FAILED|{error.GetBaseException().Message}");
+                Plugin.DiagWarning($"AUTO-SKILLS LIKES RESTORE FAILED|{error.GetBaseException().Message}");
             }
             try
             {
@@ -3058,19 +4452,31 @@ internal static class GameInventoryReader
             {
                 cleanupSucceeded = false;
                 note = AppendTransformNote(note, "shrine hero selection could not be restored");
-                Plugin.Logger.LogWarning($"AUTO-SKILLS SHRINE HERO RESTORE FAILED|{error.GetBaseException().Message}");
+                Plugin.DiagWarning($"AUTO-SKILLS SHRINE HERO RESTORE FAILED|{error.GetBaseException().Message}");
             }
         }
 
-        var bloodAfter = Convert.ToInt32(InvokeRequiredInstance(townData, "GetRes", bloodType) ?? bloodBefore, CultureInfo.InvariantCulture);
-        return new SkillTransformResult(attempts, matched, target, Math.Max(0, bloodBefore - bloodAfter), note, cleanupSucceeded);
+        var spentBlood = -1;
+        try
+        {
+            var bloodAfter = Convert.ToInt32(InvokeRequiredInstance(townData, "GetRes", bloodType)
+                                             ?? throw new InvalidOperationException("Blood amount is unavailable after transformation."), CultureInfo.InvariantCulture);
+            spentBlood = Math.Max(0, bloodBefore - bloodAfter);
+        }
+        catch (Exception error)
+        {
+            executionSucceeded = false;
+            note = AppendTransformNote(note, $"transform Blood verification failed: {error.GetBaseException().Message}");
+            Plugin.DiagWarning($"AUTO-SKILLS TRANSFORM BLOOD UNKNOWN|{error.GetBaseException().Message}");
+        }
+        return new SkillTransformResult(attempts, matched, target, spentBlood, note, cleanupSucceeded, executionSucceeded);
     }
 
     private static IEnumerable<object> GetTransformableTalents(object talentData)
         => ReadValues(Read(talentData, "talentDic")).Where(talent => IsTransformableSkillDefinition(Read(talent, "tTalentData")));
 
     private static int CountPreferredTransformedSkills(IEnumerable<object> talents, HashSet<int> desiredSkillIds)
-        => talents.Where(talent => !ReadBool(InvokeInstance(talent, "IsLock")))
+        => talents.Where(talent => !IsTalentLockedRequired(talent))
             .Select(talent => ReadNullableInt(Read(talent, "tTalentData"), "skillId") ?? 0)
             .Where(desiredSkillIds.Contains).Distinct().Count();
 
@@ -3082,14 +4488,12 @@ internal static class GameInventoryReader
         if (maxLikes <= 0) return 0;
         var desiredOrdered = desiredTalentIds.Take(maxLikes).Distinct().ToList();
         var desired = desiredOrdered.ToHashSet();
-        var current = ReadSequence(Read(Read(townData, "saveTownData"), "likeTalentList"))
-            .Select(ToInt).Where(id => id > 0).Distinct().ToList();
+        var current = ReadTalentLikesRequired(townData);
         foreach (var talentId in current.Where(id => !desired.Contains(id)))
             SetTalentLikeState(codex, talentId, false);
         foreach (var talentId in desiredOrdered)
             SetTalentLikeState(codex, talentId, true);
-        return ReadSequence(Read(Read(townData, "saveTownData"), "likeTalentList"))
-            .Select(ToInt).Count(desired.Contains);
+        return ReadTalentLikesRequired(townData).Count(desired.Contains);
     }
 
     private static void RestoreTalentLikes(object townData, IReadOnlyCollection<int> snapshot)
@@ -3100,18 +4504,27 @@ internal static class GameInventoryReader
             if (snapshot.Count == 0) return;
             throw new InvalidOperationException("Town Codex data is unavailable.");
         }
-        var current = ReadSequence(Read(Read(townData, "saveTownData"), "likeTalentList"))
-            .Select(ToInt).Where(id => id > 0).Distinct().ToList();
+        var current = ReadTalentLikesRequired(townData);
         foreach (var talentId in current)
             if (!SetTalentLikeState(codex, talentId, false))
                 throw new InvalidOperationException($"Could not remove temporary talent preference {talentId}.");
         foreach (var talentId in snapshot)
             if (!SetTalentLikeState(codex, talentId, true))
                 throw new InvalidOperationException($"Could not restore talent preference {talentId}.");
-        var restored = ReadSequence(Read(Read(townData, "saveTownData"), "likeTalentList"))
-            .Select(ToInt).Where(id => id > 0).Distinct().ToList();
+        var restored = ReadTalentLikesRequired(townData);
         if (!restored.SequenceEqual(snapshot))
             throw new InvalidOperationException($"Talent preference order mismatch (expected {string.Join(',', snapshot)}, got {string.Join(',', restored)}).");
+    }
+
+    private static List<int> ReadTalentLikesRequired(object townData)
+    {
+        var saveTown = ReadRequiredProperty(townData, "saveTownData")
+                       ?? throw new InvalidOperationException("SaveTownData is unavailable.");
+        var values = ReadRequiredSequenceProperty(saveTown, "likeTalentList")
+            .Select(value => Convert.ToInt32(value, CultureInfo.InvariantCulture)).ToList();
+        if (values.Any(id => id <= 0) || values.Distinct().Count() != values.Count)
+            throw new InvalidOperationException($"The saved talent preference list is invalid ({string.Join(',', values)}).");
+        return values;
     }
 
     private static string AppendTransformNote(string current, string addition)
@@ -3138,12 +4551,12 @@ internal static class GameInventoryReader
 
     private static bool SetTalentLikeState(object codex, int talentId, bool liked)
     {
-        var showTalent = InvokeStaticMany("ShowTalentData", "Create", talentId, true);
-        if (showTalent is null) return false;
-        var current = ReadBool(InvokeInstance(codex, "IsLikeTalent", showTalent));
+        var showTalent = InvokeRequiredStaticMany("ShowTalentData", "Create", talentId, true)
+                         ?? throw new InvalidOperationException($"ShowTalentData {talentId} could not be created.");
+        var current = ReadBool(InvokeRequiredInstance(codex, "IsLikeTalent", showTalent));
         if (current == liked) return true;
         InvokeRequiredInstance(codex, "SetLikeTalent", showTalent);
-        return ReadBool(InvokeInstance(codex, "IsLikeTalent", showTalent)) == liked;
+        return ReadBool(InvokeRequiredInstance(codex, "IsLikeTalent", showTalent)) == liked;
     }
 
     private static bool SameHeroIdentity(object? left, object? right)
@@ -3164,6 +4577,9 @@ internal static class GameInventoryReader
         var skillWeaponPreferences = new List<HashSet<int>>();
         var activeSkillMainType = 0;
         var activeSkillTags = new HashSet<int>();
+        var previewBaseSkillId = 0;
+        var currentBaseSkill = InvokeInstance(hero, "GetNowBaseSkillData");
+        var previewBaseSkillLevel = Math.Max(1, ReadNullableInt(currentBaseSkill, "level") ?? 1);
         var skillIds = new HashSet<int>();
         var skillInfoIds = new HashSet<int>();
         var talentIds = new HashSet<int>();
@@ -3177,11 +4593,14 @@ internal static class GameInventoryReader
             .Select(slot => GetEquippedItem(hero, slot.Part, slot.MainWeapon))
             .Where(item => item is not null).Cast<object>()
             .DistinctBy(item => NativeObjectKey(item, item)).ToList();
-        var equippedAffixes = equippedItems.SelectMany(CollectEquipmentAffixes).ToList();
+        var equippedAffixes = equippedItems
+            .SelectMany(item => CollectEquipmentAffixes(item).Concat(CollectGrantedMasteryAffixes(item)))
+            .ToList();
         var equipmentAbilityIds = equippedAffixes
             .Select(affix => ReadNullableInt(Read(ResolveRuntimeAffix(affix), "tAbilityData"), "id") ?? 0)
             .Where(id => id > 0).ToHashSet();
-        var equipmentTalentIds = equippedAffixes
+        var equipmentTalentIds = equippedItems.SelectMany(CollectRunewordAffixes)
+            .Select(ResolveRuntimeAffix)
             .Select(affix => ReadNullableInt(Read(ResolveRuntimeAffix(affix), "tTalentData"), "id") ?? 0)
             .Where(id => id > 0).ToHashSet();
         foreach (var setEffect in ReadList(Read(Read(hero, "heroEquipData"), "activeSetsEffectList")))
@@ -3217,6 +4636,8 @@ internal static class GameInventoryReader
             }
             if (isBase)
             {
+                previewBaseSkillId = skillId;
+                previewBaseSkillLevel = Math.Max(1, ReadNullableInt(skill, "level") ?? previewBaseSkillLevel);
                 activeSkillMainType = ReadNullableInt(skill, "skillMainType") ?? ReadNullableInt(row, "type") ?? 0;
                 activeSkillTags = ReadSequence(Read(info, "tagArr")).Select(ToInt).Where(value => value > 0).ToHashSet();
                 var subType = ReadNullableInt(skill, "skillSubType") ?? 0;
@@ -3228,7 +4649,7 @@ internal static class GameInventoryReader
             AddTerm(EnglishName(row, string.Empty));
         }
 
-        AddSkill(InvokeInstance(hero, "GetNowBaseSkillData"), true);
+        AddSkill(currentBaseSkill, true);
         var heroTalent = Read(hero, "heroTalentData");
         var gridTalents = ReadValues(Read(heroTalent, "talentDic")).ToList();
         var extraTalents = ReadList(Read(heroTalent, "extraTalentList"))
@@ -3263,50 +4684,14 @@ internal static class GameInventoryReader
             AddTerm(EnglishName(row, string.Empty));
         }
 
+        // Official build rows are intentionally not fed back into equipment or
+        // skill scoring. They are used only as a safe catalogue of transformable
+        // talent identities; live stats, learned effects and the chosen objective
+        // decide the ranking.
         var recommendedEquipment = new HashSet<int>();
         var recommendedRunewordKeys = new HashSet<string>(StringComparer.Ordinal);
-        var preferredBuild = GetPreferredBuild(hero, focus);
-        foreach (var talentId in ReadSequence(Read(preferredBuild, "skillArr")).Select(ToInt).Where(id => id > 0))
-        {
-            var talentRow = InvokeStatic("TableData", "getTTalentData", talentId);
-            if (talentRow is null) continue;
-            talentIds.Add(talentId);
-            preferredTalentIds.Add(talentId);
-            var skillId = ReadNullableInt(talentRow, "skillId") ?? 0;
-            if (skillId > 0)
-            {
-                preferredSkillIds.Add(skillId);
-                AddSkill(InvokeStatic("TableData", "getTSkillData", skillId), IsBaseSkillDefinition(talentRow));
-            }
-        }
-        foreach (var talentId in ReadSequence(Read(preferredBuild, "masteryArr")).Select(ToInt).Where(id => id > 0))
-        {
-            var talentRow = InvokeStatic("TableData", "getTTalentData", talentId);
-            if (talentRow is null) continue;
-            talentIds.Add(talentId);
-            preferredTalentIds.Add(talentId);
-            var masteryId = ReadNullableInt(talentRow, "masteryId") ?? 0;
-            if (masteryId <= 0) continue;
-            masteryIds.Add(masteryId);
-            preferredMasteryIds.Add(masteryId);
-            var mastery = InvokeStatic("TableData", "getTMasteryData", masteryId);
-            AddTerm(ReadString(mastery, "name"));
-            AddTerm(EnglishName(mastery, string.Empty));
-        }
-        foreach (var value in ReadSequence(Read(preferredBuild, "equipArr")))
-        {
-            var id = ToInt(value);
-            if (id > 0) recommendedEquipment.Add(id);
-        }
-        var runewordGuideValues = ReadSequence(Read(preferredBuild, "runewordArr")).Select(ToInt).ToList();
-        for (var index = 0; index + 1 < runewordGuideValues.Count; index += 2)
-        {
-            var runewordId = runewordGuideValues[index];
-            var equipId = runewordGuideValues[index + 1];
-            if (runewordId > 0 && equipId > 0) recommendedRunewordKeys.Add($"{runewordId}:{equipId}");
-        }
 
-        return new HeroEffectProfile(focus, jobId, allowedWeapons, baseWeaponRequirement, skillWeaponPreferences, activeSkillMainType, activeSkillTags, skillIds, skillInfoIds, talentIds, masteryIds, preferredTalentIds, preferredSkillIds, preferredMasteryIds, abilityIds, recommendedEquipment, recommendedRunewordKeys, terms.ToArray());
+        return new HeroEffectProfile(focus, jobId, allowedWeapons, baseWeaponRequirement, skillWeaponPreferences, activeSkillMainType, activeSkillTags, previewBaseSkillId, previewBaseSkillLevel, skillIds, skillInfoIds, talentIds, masteryIds, preferredTalentIds, preferredSkillIds, preferredMasteryIds, abilityIds, recommendedEquipment, recommendedRunewordKeys, terms.ToArray());
     }
 
     private static GearCandidate? CreateGearCandidate(ItemSearchRecord record, object hero, HeroEffectProfile profile)
@@ -3336,7 +4721,10 @@ internal static class GameInventoryReader
         var definitionId = ReadNullableInt(definition, "id") ?? 0;
         var score = ScoreEquipment(record.ItemData, profile);
         var numericScore = EstimateEquipmentNumericScore(record.ItemData, profile);
-        return new GearCandidate(record, NativeObjectKey(record.ItemData, record.SourceField ?? record.ItemData), part, setId, definitionId, minType, score.Total + numericScore * 0.08d, numericScore, score.DirectMatches, score.ThemeMatches);
+        var nonStackingEffectKeys = GetNonStackingEffectKeys(record.ItemData);
+        var rawScore = score.Total + numericScore * 0.08d;
+        var deduplicatedScore = ScoreSingleItemWithDeduplicatedEffects(record.ItemData, profile, rawScore);
+        return new GearCandidate(record, NativeObjectKey(record.ItemData, record.SourceField ?? record.ItemData), part, setId, definitionId, minType, deduplicatedScore, numericScore, score.DirectMatches, score.ThemeMatches, nonStackingEffectKeys);
     }
 
     private static EquipmentScore ScoreEquipment(object item, HeroEffectProfile profile)
@@ -3356,9 +4744,12 @@ internal static class GameInventoryReader
         var directMatches = 0;
         var behaviorScore = 0d;
         var definitionId = ReadNullableInt(definition, "id") ?? 0;
-        foreach (var affix in CollectEquipmentAffixes(item))
+        var runewordAffix = GetRunewordAffix(item) is { } rawRuneword ? ResolveRuntimeAffix(rawRuneword) : null;
+        foreach (var affix in CollectEquipmentAffixes(item).Concat(CollectGrantedMasteryAffixes(item)))
         {
             var runtimeAffix = ResolveRuntimeAffix(affix);
+            if ((ReadNullableInt(Read(runtimeAffix, "tAffixData"), "effectType") ?? 0) == 100
+                && !NativeEquals(runtimeAffix, runewordAffix)) continue;
             var affixText = GetAffixSearchText(runtimeAffix);
             descriptions.Add(affixText);
             directMatches += CountDirectAffixMatches(runtimeAffix, profile);
@@ -3370,7 +4761,9 @@ internal static class GameInventoryReader
         var themeMatches = KeywordScore(text, profile.Focus.Keywords);
         var focusBonus = themeMatches * (profile.Focus.IsManual ? 70d : 38d) + textHintMatches * 28d;
         var generalBonus = KeywordScore(text, new[] { "all attack", "all defense", "primary attribute", "crit", "speed", "cost", "resist", "health" }) * 12d;
-        var guideBonus = profile.RecommendedEquipmentIds.Contains(definitionId) ? 420d : 0d;
+        // Guide equipment is retained in the shortlist for comparison, but it
+        // receives no score bonus. Native stats/effects decide the winner.
+        const double guideBonus = 0d;
         var total = qualityWeight * 0.2d + level * 0.2d + forge * 0.5d + main * 0.002d
                     + focusBonus + generalBonus + directMatches * 350d + behaviorScore + guideBonus;
         return new EquipmentScore(total, directMatches, themeMatches);
@@ -3387,30 +4780,31 @@ internal static class GameInventoryReader
 
         if (effectType == 4)
         {
-            var skillIds = ReadSequence(Read(definition, "effectParam")).Select(ToInt).Where(id => id > 0).ToHashSet();
-            if (skillIds.Overlaps(profile.PreferredSkillIds)) return 800d;
-            if (profile.PreferredSkillIds.Count == 0 && skillIds.Overlaps(profile.SkillIds)) return 260d;
+            var skillId = GetSkillVariantId(definition);
+            if (skillId > 0 && profile.SkillIds.Contains(skillId)) return 800d;
             return 0d;
         }
 
         if (effectType == 100)
         {
-            var talent = Read(affix, "tTalentData");
+            var affixSave = Read(affix, "saveData");
+            var talent = Read(affix, "tTalentData")
+                         ?? InvokeStatic("TableData", "getTTalentData", ReadNullableInt(affixSave, "talentId") ?? 0);
             var talentId = ReadNullableInt(talent, "id") ?? 0;
+            var talentType = ReadNullableInt(talent, "type") ?? 0;
             var skillId = ReadNullableInt(talent, "skillId") ?? 0;
             var masteryId = ReadNullableInt(talent, "masteryId") ?? 0;
-            var preferred = (talentId > 0 && profile.PreferredTalentIds.Contains(talentId))
-                            || (skillId > 0 && profile.PreferredSkillIds.Contains(skillId))
-                            || (masteryId > 0 && profile.PreferredMasteryIds.Contains(masteryId));
             var current = (talentId > 0 && profile.TalentIds.Contains(talentId))
                           || (skillId > 0 && profile.SkillIds.Contains(skillId))
                           || (masteryId > 0 && profile.MasteryIds.Contains(masteryId));
-            var runewordId = ReadNullableInt(Read(affix, "tRunewordsData"), "id")
-                             ?? ReadNullableInt(Read(affix, "saveData"), "runewordsId") ?? 0;
-            var guideMatched = runewordId > 0 && equipmentId > 0
-                               && profile.RecommendedRunewordKeys.Contains($"{runewordId}:{equipmentId}");
-            var preferredKnown = profile.PreferredTalentIds.Count > 0 || profile.PreferredSkillIds.Count > 0 || profile.PreferredMasteryIds.Count > 0;
-            return (guideMatched ? 1200d : 0d) + (preferred ? 800d : !preferredKnown && current ? 220d : 0d);
+            // Native deduplicates granted skills by actual TSkill id and keeps
+            // the highest talentLevel. Give that level a bounded heuristic
+            // value so Lv10 does not tie Lv1 before the final native proxy.
+            var grantedSkillLevel = talentType == 1
+                ? Math.Max(0, ReadNullableInt(affixSave, "talentLevel") ?? 0)
+                : 0;
+            var levelValue = Math.Min(600d, grantedSkillLevel * 30d);
+            return (current ? 800d : 0d) + levelValue;
         }
 
         if (effectType == 3)
@@ -3460,7 +4854,7 @@ internal static class GameInventoryReader
             // affix by adding saveData.value to every EAttrType in effectParam.
             // Include that exact magnitude before beam pruning; previously +1
             // and +100 sub-options had the same keyword-only candidate score.
-            foreach (var affix in CollectEquipmentAffixes(item).Select(ResolveRuntimeAffix))
+            foreach (var affix in CollectEquipmentAffixes(item).Concat(CollectGrantedMasteryAffixes(item)).Select(ResolveRuntimeAffix))
             {
                 var definition = Read(affix, "tAffixData");
                 if ((ReadNullableInt(definition, "effectType") ?? 0) != 1) continue;
@@ -3475,7 +4869,7 @@ internal static class GameInventoryReader
             if (!numericPreScoreFailureLogged)
             {
                 numericPreScoreFailureLogged = true;
-                Plugin.Logger.LogWarning($"AUTO-GEAR NUMERIC PRE-SCORE FAILED|raw fallback is active|{error.GetBaseException().Message}");
+                Plugin.DiagWarning($"AUTO-GEAR NUMERIC PRE-SCORE FAILED|raw fallback is active|{error.GetBaseException().Message}");
             }
             return 0d;
         }
@@ -3552,10 +4946,13 @@ internal static class GameInventoryReader
             var activeEffects = effects.Where(effect => effect.Pieces <= count).ToList();
             if (activeEffects.Count == 0) continue;
 
-            var setText = GetSetThemeText(group.Key, effects);
+            // Score only thresholds that are actually active at this piece
+            // count. Including a future 4-piece description while evaluating a
+            // 2-piece loadout can invert Fire/Lightning theme decisions.
+            var setText = Clean(string.Join(" ", activeEffects.Select(effect => effect.Text))).ToLowerInvariant();
             var setThemeMatches = KeywordScore(setText, profile.Focus.Keywords);
             var opposingElementMatches = GetOpposingElementThemeScore(setText, profile.Focus.Key);
-            var preferredSet = group.Any(item => profile.RecommendedEquipmentIds.Contains(item.DefinitionId));
+            const bool preferredSet = false;
             var activeSkillMatches = activeEffects.Sum(effect => Math.Min(3,
                 profile.SkillTerms.Count(term => effect.Text.Contains(term, StringComparison.OrdinalIgnoreCase))));
 
@@ -3583,8 +4980,8 @@ internal static class GameInventoryReader
                 score += effectSkillMatches * 700d;
             }
 
-            if (setThemeMatches > 0 || activeSkillMatches > 0 || preferredSet)
-                score += count * 220d + activeEffects.Count * 650d + (preferredSet ? 1800d : 0d);
+            if (setThemeMatches > 0 || activeSkillMatches > 0)
+                score += count * 220d + activeEffects.Count * 650d;
         }
         return score;
     }
@@ -3608,7 +5005,9 @@ internal static class GameInventoryReader
             .ToDictionary(group => group.Key, group =>
             {
                 var wearCounts = GetSetEffectWearCounts(group.Key);
-                return group.Select(entry => new SetEffectScoreRow(
+                return group.Where(entry => wearCounts.Count == 0 || wearCounts.ContainsKey(entry.EffectId))
+                    .Select(entry => new SetEffectScoreRow(
+                        entry.EffectId,
                         wearCounts.TryGetValue(entry.EffectId, out var pieces)
                             ? pieces
                             : Math.Max(2, entry.Index == int.MaxValue ? 2 : entry.Index * 2),
@@ -3625,12 +5024,18 @@ internal static class GameInventoryReader
         var result = new Dictionary<int, int>();
         var set = InvokeStatic("TableData", "getTEquipSetsData", setId);
         var encoded = ReadString(set, "affixStr") ?? string.Empty;
-        foreach (Match match in Regex.Matches(encoded, @"(?<pieces>\d+)\s*,\s*(?<effect>\d+)"))
+        // Native InitSetsAffixDic parses semicolon-separated rows where the
+        // first integer is wearCount and every remaining integer is an effect
+        // id. A row can activate multiple effects at the same threshold.
+        foreach (var row in encoded.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            if (!int.TryParse(match.Groups["pieces"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pieces)
-                || !int.TryParse(match.Groups["effect"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var effectId)
-                || pieces <= 0 || effectId <= 0) continue;
-            result[effectId] = pieces;
+            var values = row.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(value => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0)
+                .ToList();
+            if (values.Count < 2 || values[0] <= 0) continue;
+            var pieces = values[0];
+            foreach (var effectId in values.Skip(1).Where(value => value > 0))
+                result[effectId] = pieces;
         }
         if (result.Count > 0) return result;
 
@@ -3656,8 +5061,7 @@ internal static class GameInventoryReader
         {
             ReadString(set, "name") ?? string.Empty,
             EnglishName(set, string.Empty) ?? string.Empty,
-            ReadString(set, "des") ?? string.Empty,
-            EnglishText(set, "_des", string.Empty) ?? string.Empty
+            ReadString(set, "des") ?? string.Empty
         };
         foreach (var member in ReadValues(ReadStatic("TableData", "TEquipDict"))
                      .Where(member => (ReadNullableInt(member, "setsId") ?? 0) == setId))
@@ -3693,8 +5097,9 @@ internal static class GameInventoryReader
         {
             effectsBySet.TryGetValue(group.Key, out var effects);
             effects ??= new List<SetEffectScoreRow>();
-            var text = GetSetThemeText(group.Key, effects);
-            var active = effects.Where(effect => effect.Pieces <= group.Count()).Select(effect => effect.Pieces).Distinct().OrderBy(value => value);
+            var activeEffects = effects.Where(effect => effect.Pieces <= group.Count()).ToList();
+            var text = Clean(string.Join(" ", activeEffects.Select(effect => effect.Text))).ToLowerInvariant();
+            var active = activeEffects.Select(effect => effect.Pieces).Distinct().OrderBy(value => value);
             parts.Add($"set={group.Key}/pieces={group.Count()}/active={string.Join(',', active)}/theme={KeywordScore(text, profile.Focus.Keywords)}/opposing={GetOpposingElementThemeScore(text, profile.Focus.Key)}/guide={group.Count(item => profile.RecommendedEquipmentIds.Contains(item.DefinitionId))}");
         }
         return parts.Count == 0 ? "none" : string.Join(" ; ", parts);
@@ -3702,12 +5107,12 @@ internal static class GameInventoryReader
 
     private static double ScoreCompleteLoadout(List<GearCandidate> items, object hero, HeroEffectProfile profile, List<object> currentItems)
     {
-        var score = items.Sum(item => item.Score) + EstimatePartialSetSynergy(items, profile);
+        var score = ScoreItemsWithDeduplicatedEffects(items, profile) + EstimatePartialSetSynergy(items, profile);
         var weaponTypes = items.Where(item => item.Part == 1).Select(item => item.WeaponType).Where(value => value > 0).ToHashSet();
         if (profile.BaseWeaponRequirement.Count > 0)
             score += profile.BaseWeaponRequirement.Overlaps(weaponTypes) ? 3200d : -30000d;
         foreach (var preference in profile.SkillWeaponPreferences)
-            if (preference.Overlaps(weaponTypes)) score += 420d;
+            score += preference.Overlaps(weaponTypes) ? 420d : -12000d;
 
         // Use the game's own AttrData calculations on a temporary copy. This keeps
         // the user's hero and save untouched while accounting for core stats,
@@ -3715,6 +5120,17 @@ internal static class GameInventoryReader
         if (TryEvaluateFinalPerformance(items, hero, profile, currentItems, out var performance))
             score += performance * 2.4d;
         return score;
+    }
+
+    private static bool IsLoadoutWeaponCompatible(IEnumerable<GearCandidate> items, HeroEffectProfile profile)
+    {
+        var weaponTypes = items.Where(item => item.Part == 1)
+            .Select(item => item.WeaponType).Where(value => value > 0).ToHashSet();
+        if (profile.BaseWeaponRequirement.Count > 0
+            && !profile.BaseWeaponRequirement.Overlaps(weaponTypes)) return false;
+        return profile.SkillWeaponPreferences
+            .Where(requirement => requirement.Count > 0)
+            .All(requirement => requirement.Overlaps(weaponTypes));
     }
 
     private static bool TryEvaluateFinalPerformance(List<GearCandidate> items, object hero, HeroEffectProfile profile, List<object> currentItems, out double score)
@@ -3732,7 +5148,7 @@ internal static class GameInventoryReader
             // the selected base skill's own physical/elemental mix, damage types,
             // attribute coefficients and class scaling against this temporary
             // AttrData. Nothing on the real hero or save is changed.
-            var hasNativeSkillDamage = TryEvaluateNativeBaseSkillSustainedDamage(simulated, hero, items, out var sustainedDamage60s);
+            var hasNativeSkillDamage = TryEvaluateNativeBaseSkillSustainedDamage(simulated, hero, profile, items, out var sustainedDamage60s);
             if (!hasNativeSkillDamage)
             {
                 var phy = ReadAttrRequired(simulated, 1);
@@ -3781,30 +5197,37 @@ internal static class GameInventoryReader
             if (!performanceSimulationFailureLogged)
             {
                 performanceSimulationFailureLogged = true;
-                Plugin.Logger.LogWarning($"AUTO-GEAR ATTR SIMULATION FAILED|heuristic fallback is active|{error.GetBaseException().Message}");
+                Plugin.DiagWarning($"AUTO-GEAR ATTR SIMULATION FAILED|heuristic fallback is active|{error.GetBaseException().Message}");
             }
             return false;
         }
     }
 
-    private static bool TryEvaluateNativeBaseSkillSustainedDamage(object attrData, object hero, IEnumerable<GearCandidate> items, out double sustainedDamage60s)
+    private static bool TryEvaluateNativeBaseSkillSustainedDamage(object attrData, object hero, HeroEffectProfile profile, IEnumerable<GearCandidate> items, out double sustainedDamage60s, bool includeCurrentEquipmentVariant = false)
     {
         const double windowSeconds = 60d;
         sustainedDamage60s = 0d;
         try
         {
-            var actualSkill = InvokeRequiredInstance(hero, "GetNowBaseSkillData")
-                              ?? throw new InvalidOperationException("The selected hero has no active base skill.");
-            var skillId = ReadNullableInt(Read(actualSkill, "tSkillData"), "id") ?? 0;
+            var actualSkill = InvokeInstance(hero, "GetNowBaseSkillData");
+            // When a guide targets a different base skill, compare candidate gear
+            // against that target instead of silently previewing the currently
+            // equipped (outgoing) base skill with the target skill's tags.
+            var skillId = profile.PreviewBaseSkillId > 0
+                ? profile.PreviewBaseSkillId
+                : ReadNullableInt(Read(actualSkill, "tSkillData"), "id") ?? 0;
             if (skillId <= 0) throw new InvalidOperationException("The active base skill ID is unavailable.");
-            var level = Math.Max(1, ReadNullableInt(actualSkill, "level") ?? 1);
+            var level = Math.Max(1, profile.PreviewBaseSkillLevel > 0
+                ? profile.PreviewBaseSkillLevel
+                : ReadNullableInt(actualSkill, "level") ?? 1);
             var preview = InvokeRequiredStaticMany("SkillData", "CreatePreview", skillId, level, attrData)
                           ?? throw new InvalidOperationException("SkillData.CreatePreview returned no skill.");
 
             // The live skill may be variant-enabled by the currently equipped
             // loadout. Do not copy that state into every candidate. Apply only a
             // variant supplied by the candidate loadout being evaluated.
-            if (CandidateEnablesSkillVariant(items, skillId))
+            if (CandidateEnablesSkillVariant(items, skillId)
+                || (includeCurrentEquipmentVariant && CurrentEquipmentEnablesSkillVariant(hero, skillId)))
                 InvokeRequiredInstance(preview, "SetVariant", true);
 
             var skillInfo = Read(preview, "tSkillInfoData")
@@ -3886,7 +5309,7 @@ internal static class GameInventoryReader
             if (!sustainedDamageModelLogged)
             {
                 sustainedDamageModelLogged = true;
-                Plugin.Logger.LogInfo($"AUTO-GEAR 60S ESTIMATE|skill={skillId}|cooldown={cooldown:0.###}|speed={nativeSpeed:0.###}|cast-opportunities={castOpportunities:0.##}|single-target uptime proxy, not exact battle AI");
+                Plugin.DiagInfo($"AUTO-GEAR 60S ESTIMATE|skill={skillId}|cooldown={cooldown:0.###}|speed={nativeSpeed:0.###}|cast-opportunities={castOpportunities:0.##}|single-target uptime proxy, not exact battle AI");
             }
             return double.IsFinite(sustainedDamage60s) && sustainedDamage60s > 0d;
         }
@@ -3895,7 +5318,7 @@ internal static class GameInventoryReader
             if (!nativeSkillPreviewFailureLogged)
             {
                 nativeSkillPreviewFailureLogged = true;
-                Plugin.Logger.LogWarning($"AUTO-GEAR 60S SKILL PREVIEW FAILED|attribute fallback is active|{error.GetBaseException().Message}");
+                Plugin.DiagWarning($"AUTO-GEAR 60S SKILL PREVIEW FAILED|attribute fallback is active|{error.GetBaseException().Message}");
             }
             return false;
         }
@@ -3906,8 +5329,24 @@ internal static class GameInventoryReader
             .Select(ResolveRuntimeAffix)
             .Select(affix => Read(affix, "tAffixData"))
             .Where(definition => (ReadNullableInt(definition, "effectType") ?? 0) == 4)
-            .SelectMany(definition => ReadSequence(Read(definition, "effectParam")).Select(ToInt))
+            .Select(GetSkillVariantId)
             .Any(id => id == skillId);
+
+    private static bool CurrentEquipmentEnablesSkillVariant(object hero, int skillId)
+        => skillId > 0 && GetGearSlots()
+            .Select(slot => GetEquippedItem(hero, slot.Part, slot.MainWeapon))
+            .Where(item => item is not null).Cast<object>()
+            .SelectMany(CollectEquipmentAffixes)
+            .Select(ResolveRuntimeAffix)
+            .Select(affix => Read(affix, "tAffixData"))
+            .Where(definition => (ReadNullableInt(definition, "effectType") ?? 0) == 4)
+            .Select(GetSkillVariantId)
+            .Any(id => id == skillId);
+
+    // Native AffixData.SetActiveHeroSkillVariant reads effectParam[0] only.
+    // Later parameters can describe the effect but are not additional skills.
+    private static int GetSkillVariantId(object? affixDefinition)
+        => ReadSequence(Read(affixDefinition, "effectParam")).Select(ToInt).FirstOrDefault();
 
     private static void ApplyEquipmentToAttr(object attrData, object item, bool active)
     {
@@ -3924,7 +5363,7 @@ internal static class GameInventoryReader
                            ?? throw new InvalidOperationException($"Unknown battle attribute type {mapping.BattleAttrType}.");
             InvokeRequiredInstance(attrData, "ChangeAttr", attrEnum, (float)(value * sign));
         }
-        foreach (var affix in CollectEquipmentAffixes(item))
+        foreach (var affix in CollectEquipmentAffixes(item).Concat(CollectGrantedMasteryAffixes(item)))
             InvokeRequiredInstance(ResolveRuntimeAffix(affix), "SetActiveAttrData", attrData, active);
     }
 
@@ -4001,6 +5440,208 @@ internal static class GameInventoryReader
         }
     }
 
+    private static object? GetRunewordAffix(object item)
+    {
+        var equip = Read(item, "itemEquipData");
+        var save = Read(item, "saveItemData");
+        return Read(equip, "runewordsAffixData") ?? Read(save, "runewordsAffixData");
+    }
+
+    private static IEnumerable<object> CollectRunewordAffixes(object item)
+    {
+        if (GetRunewordAffix(item) is { } affix) yield return affix;
+    }
+
+    private static IEnumerable<object> CollectGrantedMasteryAffixes(object item)
+    {
+        // effectType 100 calls HeroTalentData.AddExtraTalent. When that talent
+        // is a mastery, native TalentData.Init creates MasteryData at exactly
+        // saveData.talentLevel and immediately applies its affixes. Build the
+        // game's display-only mastery object to obtain the same scaled affixes
+        // without touching the live hero or save.
+        foreach (var outer in CollectRunewordAffixes(item).Select(ResolveRuntimeAffix))
+        {
+            var definition = Read(outer, "tAffixData");
+            if ((ReadNullableInt(definition, "effectType") ?? 0) != 100) continue;
+            var save = Read(outer, "saveData");
+            var talent = Read(outer, "tTalentData")
+                         ?? InvokeStatic("TableData", "getTTalentData", ReadNullableInt(save, "talentId") ?? 0);
+            var masteryId = ReadNullableInt(talent, "masteryId") ?? 0;
+            var talentLevel = ReadNullableInt(save, "talentLevel") ?? 0;
+            if (masteryId <= 0 || talentLevel <= 0) continue;
+            var preview = InvokeRequiredStaticMany("MasteryData", "CreateByShow", masteryId, talentLevel, talentLevel)
+                          ?? throw new InvalidOperationException($"Mastery preview {masteryId} Lv{talentLevel} could not be created.");
+            foreach (var affix in ReadList(Read(preview, "affixList")))
+            {
+                // Native MasteryData.GetMasteryEffect applies only bodyAttr
+                // and getAbility affixes. It does not execute nested
+                // skillVariant/extraTalent rows even if a future table contains
+                // them, so keep the preview contract equally narrow.
+                var effectType = ReadNullableInt(Read(ResolveRuntimeAffix(affix), "tAffixData"), "effectType") ?? 0;
+                if (effectType is 1 or 3) yield return affix;
+            }
+        }
+    }
+
+    private static HashSet<string> GetNonStackingEffectKeys(object item)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        var equip = Read(item, "itemEquipData");
+        var equipDefinition = Read(equip, "tEquipData");
+        var itemSave = Read(item, "saveItemData");
+        var quality = ReadNullableInt(itemSave, "quality") ?? ReadNullableInt(equipDefinition, "quality") ?? 0;
+        var uniqueSkillAffix = ReadNullableInt(equipDefinition, "uniqueSkillAffix") ?? 0;
+        // Quality-8 Uniques can expose the same named special effect on two
+        // physical copies. Native appends both AbilityData instances, but the
+        // eventual buff/status may still merge or cap per ability. The user
+        // explicitly prefers a different effect over a duplicate Unique, so
+        // keep this policy narrow to the Unique's declared special affix rather
+        // than incorrectly treating every repeated ability as non-stacking.
+        if (quality == 8 && uniqueSkillAffix > 0)
+            result.Add($"unique-effect:{uniqueSkillAffix}");
+
+        var runewordAffix = GetRunewordAffix(item) is { } rawRuneword ? ResolveRuntimeAffix(rawRuneword) : null;
+        foreach (var affix in CollectEquipmentAffixes(item).Concat(CollectGrantedMasteryAffixes(item)).Select(ResolveRuntimeAffix))
+        {
+            var definition = Read(affix, "tAffixData");
+            var save = Read(affix, "saveData");
+            var effectType = ReadNullableInt(definition, "effectType") ?? 0;
+            var affixId = ReadNullableInt(definition, "id") ?? ReadNullableInt(save, "id") ?? 0;
+
+            switch (effectType)
+            {
+                case 4: // skillVariant: enabling the same variant twice is still one boolean state.
+                {
+                    var skillId = GetSkillVariantId(definition);
+                    if (skillId > 0) result.Add($"skill-variant:{skillId}");
+                    else if (affixId > 0) result.Add($"skill-variant-affix:{affixId}");
+                    break;
+                }
+                case 100:
+                {
+                    if (!NativeEquals(affix, runewordAffix)) break;
+                    // Extra masteries are independently applied and may stack.
+                    // Extra skills are different: GetSkillList deduplicates by
+                    // the real TSkill id and keeps only the highest level.
+                    var talent = Read(affix, "tTalentData")
+                                 ?? InvokeStatic("TableData", "getTTalentData", ReadNullableInt(save, "talentId") ?? 0);
+                    var talentType = ReadNullableInt(talent, "type") ?? 0;
+                    var skillId = ReadNullableInt(talent, "skillId") ?? 0;
+                    if (talentType == 1 && skillId > 0) result.Add($"extra-skill:{skillId}");
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static bool IsHardExclusiveEffectKey(string key)
+        => key.StartsWith("unique-effect:", StringComparison.Ordinal);
+
+    private static Dictionary<string, int> GetGrantedExtraSkillLevels(object item)
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var affix in CollectRunewordAffixes(item).Select(ResolveRuntimeAffix))
+        {
+            var definition = Read(affix, "tAffixData");
+            if ((ReadNullableInt(definition, "effectType") ?? 0) != 100) continue;
+            var save = Read(affix, "saveData");
+            var talent = Read(affix, "tTalentData")
+                         ?? InvokeStatic("TableData", "getTTalentData", ReadNullableInt(save, "talentId") ?? 0);
+            if ((ReadNullableInt(talent, "type") ?? 0) != 1) continue;
+            var skillId = ReadNullableInt(talent, "skillId") ?? 0;
+            if (skillId <= 0) continue;
+            var key = $"extra-skill:{skillId}";
+            var level = Math.Max(0, ReadNullableInt(save, "talentLevel") ?? 0);
+            result[key] = Math.Max(result.GetValueOrDefault(key), level);
+        }
+        return result;
+    }
+
+    private static IEnumerable<DeduplicatedEffectContribution> GetDeduplicatedEffectContributions(object item, HeroEffectProfile profile)
+    {
+        var equipId = ReadNullableInt(Read(Read(item, "itemEquipData"), "tEquipData"), "id") ?? 0;
+        var runewordAffix = GetRunewordAffix(item) is { } rawRuneword ? ResolveRuntimeAffix(rawRuneword) : null;
+        foreach (var affix in CollectEquipmentAffixes(item).Concat(CollectGrantedMasteryAffixes(item)).Select(ResolveRuntimeAffix))
+        {
+            var definition = Read(affix, "tAffixData");
+            var save = Read(affix, "saveData");
+            var effectType = ReadNullableInt(definition, "effectType") ?? 0;
+            string? key = null;
+            var level = 1;
+            if (effectType == 4)
+            {
+                var skillId = GetSkillVariantId(definition);
+                var affixId = ReadNullableInt(definition, "id") ?? ReadNullableInt(save, "id") ?? 0;
+                key = skillId > 0 ? $"skill-variant:{skillId}"
+                    : affixId > 0 ? $"skill-variant-affix:{affixId}" : null;
+            }
+            else if (effectType == 100)
+            {
+                if (!NativeEquals(affix, runewordAffix)) continue;
+                var talent = Read(affix, "tTalentData")
+                             ?? InvokeStatic("TableData", "getTTalentData", ReadNullableInt(save, "talentId") ?? 0);
+                if ((ReadNullableInt(talent, "type") ?? 0) != 1) continue;
+                var skillId = ReadNullableInt(talent, "skillId") ?? 0;
+                if (skillId > 0) key = $"extra-skill:{skillId}";
+                level = Math.Max(0, ReadNullableInt(save, "talentLevel") ?? 0);
+            }
+            if (key is null) continue;
+
+            var direct = CountDirectAffixMatches(affix, profile);
+            var behavior = ScoreAffixBehavior(affix, equipId, profile, GetAffixSearchText(affix));
+            var value = direct * 350d + Math.Max(0d, behavior);
+            if (value > 0d || direct > 0)
+                yield return new DeduplicatedEffectContribution(key, level, value, direct);
+        }
+    }
+
+    private static IEnumerable<DeduplicatedEffectContribution> SelectEffectiveDeduplicatedEffects(
+        IEnumerable<DeduplicatedEffectContribution> contributions)
+        => contributions.GroupBy(entry => entry.Key, StringComparer.Ordinal).Select(group =>
+            group.Key.StartsWith("extra-skill:", StringComparison.Ordinal)
+                ? group.OrderByDescending(entry => entry.Level).ThenByDescending(entry => entry.Value).First()
+                : group.OrderByDescending(entry => entry.Value).First());
+
+    private static double ScoreSingleItemWithDeduplicatedEffects(object item, HeroEffectProfile profile, double rawScore)
+    {
+        var contributions = GetDeduplicatedEffectContributions(item, profile).ToList();
+        if (contributions.Count == 0) return rawScore;
+        return rawScore - contributions.Sum(entry => entry.Value)
+                        + SelectEffectiveDeduplicatedEffects(contributions).Sum(entry => entry.Value);
+    }
+
+    private static double ScoreItemsWithDeduplicatedEffects(IReadOnlyCollection<GearCandidate> items, HeroEffectProfile profile)
+    {
+        var raw = items.Sum(item => item.Score);
+        var perItemEffective = items.SelectMany(item => SelectEffectiveDeduplicatedEffects(
+            GetDeduplicatedEffectContributions(item.Record.ItemData, profile).ToList())).ToList();
+        if (perItemEffective.Count == 0) return raw;
+        return raw - perItemEffective.Sum(entry => entry.Value)
+                   + SelectEffectiveDeduplicatedEffects(perItemEffective).Sum(entry => entry.Value);
+    }
+
+    private static int CountEffectiveDirectMatches(IReadOnlyCollection<GearCandidate> items, HeroEffectProfile profile)
+    {
+        var raw = items.Sum(item => item.DirectMatches);
+        var contributions = items.SelectMany(item => GetDeduplicatedEffectContributions(item.Record.ItemData, profile)).ToList();
+        return Math.Max(0, raw - contributions.Sum(entry => entry.DirectMatches)
+                           + SelectEffectiveDeduplicatedEffects(contributions).Sum(entry => entry.DirectMatches));
+    }
+
+    private static string GetNonStackingEffectSignature(IEnumerable<string> keys)
+    {
+        var values = keys.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        return values.Length == 0 ? "none" : string.Join("+", values);
+    }
+
+    private static HashSet<string> UnionEffectKeys(IEnumerable<string> left, IEnumerable<string> right)
+    {
+        var result = new HashSet<string>(left, StringComparer.Ordinal);
+        result.UnionWith(right);
+        return result;
+    }
+
     private static object ResolveRuntimeAffix(object affix)
     {
         if (Read(affix, "tAffixData") is not null) return affix;
@@ -4030,27 +5671,22 @@ internal static class GameInventoryReader
         var jobId = ReadNullableInt(Read(affix, "tHeroJobData"), "id") ?? 0;
         if (jobId > 0 && jobId != profile.JobId) return 0;
         var talent = Read(affix, "tTalentData");
-        var preferredKnown = profile.PreferredTalentIds.Count > 0 || profile.PreferredSkillIds.Count > 0 || profile.PreferredMasteryIds.Count > 0;
         var talentId = ReadNullableInt(talent, "id") ?? 0;
         var skillId = ReadNullableInt(talent, "skillId") ?? 0;
         var masteryId = ReadNullableInt(talent, "masteryId") ?? 0;
-        if ((talentId > 0 && profile.PreferredTalentIds.Contains(talentId))
-            || (skillId > 0 && profile.PreferredSkillIds.Contains(skillId))
-            || (masteryId > 0 && profile.PreferredMasteryIds.Contains(masteryId))) matched = true;
-        else if (!preferredKnown && ((talentId > 0 && profile.TalentIds.Contains(talentId))
-                                     || (skillId > 0 && profile.SkillIds.Contains(skillId))
-                                     || (masteryId > 0 && profile.MasteryIds.Contains(masteryId)))) matched = true;
+        if ((talentId > 0 && profile.TalentIds.Contains(talentId))
+            || (skillId > 0 && profile.SkillIds.Contains(skillId))
+            || (masteryId > 0 && profile.MasteryIds.Contains(masteryId))) matched = true;
         var definition = Read(affix, "tAffixData");
         if ((ReadNullableInt(definition, "effectType") ?? 0) == 4)
         {
-            var parameters = ReadSequence(Read(definition, "effectParam")).Select(ToInt).ToHashSet();
-            if (parameters.Overlaps(profile.PreferredSkillIds)
-                || (!preferredKnown && parameters.Overlaps(profile.SkillIds))) matched = true;
+            var variantSkillId = GetSkillVariantId(definition);
+            if (profile.SkillIds.Contains(variantSkillId)) matched = true;
         }
         return matched ? 1 : 0;
     }
 
-    private static List<int> VerifyEquippedSkillVariants(object hero, object talentData, string scope)
+    private static SkillVariantVerification VerifyEquippedSkillVariants(object hero, object talentData, string scope)
     {
         var skills = ReadList(InvokeRequiredInstance(talentData, "GetSkillList")).ToList();
         var available = skills.Select(skill => ReadNullableInt(Read(skill, "tSkillData"), "id") ?? 0)
@@ -4064,14 +5700,142 @@ internal static class GameInventoryReader
             .Select(ResolveRuntimeAffix)
             .Select(affix => Read(affix, "tAffixData"))
             .Where(definition => (ReadNullableInt(definition, "effectType") ?? 0) == 4)
-            .SelectMany(definition => ReadSequence(Read(definition, "effectParam")).Select(ToInt))
+            .Select(GetSkillVariantId)
             .Where(id => id > 0 && available.Contains(id)).Distinct().ToHashSet();
         var missing = expected.Where(id => !actual.Contains(id)).ToList();
         var unexpected = actual.Where(id => !expected.Contains(id)).ToList();
-        Plugin.Logger.LogInfo($"{scope} VARIANTS|expected={string.Join(',', expected)}|actual={string.Join(',', actual)}|missing={string.Join(',', missing)}|unexpected={string.Join(',', unexpected)}");
+        Plugin.DiagInfo($"{scope} VARIANTS|expected={string.Join(',', expected)}|actual={string.Join(',', actual)}|missing={string.Join(',', missing)}|unexpected={string.Join(',', unexpected)}");
         if (missing.Count > 0 || unexpected.Count > 0)
-            Plugin.Logger.LogWarning($"{scope} VARIANT MISMATCH|missing={string.Join(',', missing)}|unexpected={string.Join(',', unexpected)}");
-        return actual;
+            Plugin.DiagWarning($"{scope} VARIANT MISMATCH|missing={string.Join(',', missing)}|unexpected={string.Join(',', unexpected)}");
+        return new SkillVariantVerification(expected.OrderBy(id => id).ToList(), actual.OrderBy(id => id).ToList(), missing.OrderBy(id => id).ToList(), unexpected.OrderBy(id => id).ToList());
+    }
+
+    private static Dictionary<int, int> GetHeroAbilityCounts(object hero)
+        => ReadList(Read(hero, "abilityList"))
+            .Select(ability => ReadNullableInt(Read(ability, "tAbilityData"), "id")
+                               ?? ReadNullableInt(ability, "id") ?? 0)
+            .Where(id => id > 0)
+            .GroupBy(id => id)
+            .ToDictionary(group => group.Key, group => group.Count());
+
+    private static Dictionary<int, int> GetExpectedGearAbilityCounts(IEnumerable<object> sourceItems)
+    {
+        var items = sourceItems.ToList();
+        var abilityIds = items
+            .SelectMany(item => CollectEquipmentAffixes(item).Concat(CollectGrantedMasteryAffixes(item)))
+            .Select(ResolveRuntimeAffix)
+            .Where(affix => (ReadNullableInt(Read(affix, "tAffixData"), "effectType") ?? 0) == 3)
+            .Select(affix => ReadNullableInt(Read(affix, "tAbilityData"), "id")
+                             ?? ReadNullableInt(Read(affix, "saveData"), "abilityId") ?? 0)
+            .Where(id => id > 0).ToList();
+        foreach (var group in items.Select(item =>
+                 {
+                     var equip = Read(item, "itemEquipData");
+                     return ReadNullableInt(Read(equip, "tEquipSetsData"), "id")
+                            ?? ReadNullableInt(Read(equip, "tEquipData"), "setsId") ?? 0;
+                 })
+                 .Where(id => id > 0).GroupBy(id => id))
+        {
+            if (!GetSetEffectScoreRows().TryGetValue(group.Key, out var effects)) continue;
+            abilityIds.AddRange(effects.Where(effect => effect.Pieces <= group.Count())
+                .Select(effect => effect.AbilityId).Where(id => id > 0));
+        }
+        return abilityIds.GroupBy(id => id).ToDictionary(group => group.Key, group => group.Count());
+    }
+
+    private static GearAbilityBaseline CaptureGearAbilityBaseline(object hero, IEnumerable<object> currentItems)
+    {
+        var actual = GetHeroAbilityCounts(hero);
+        var expectedGear = GetExpectedGearAbilityCounts(currentItems);
+        var nonGear = new Dictionary<int, int>();
+        foreach (var id in actual.Keys.Union(expectedGear.Keys))
+        {
+            var actualCount = actual.GetValueOrDefault(id);
+            var gearCount = expectedGear.GetValueOrDefault(id);
+            if (actualCount < gearCount)
+                throw new InvalidOperationException($"Existing gear ability state is stale for {id} (hero {actualCount}, gear expected {gearCount}); no equipment was changed.");
+            var baselineCount = actualCount - gearCount;
+            if (baselineCount > 0) nonGear[id] = baselineCount;
+        }
+        Plugin.DiagInfo($"AUTO-GEAR ABILITY BASELINE|hero={actual.Values.Sum()}|oldGear={expectedGear.Values.Sum()}|nonGear={nonGear.Values.Sum()}");
+        return new GearAbilityBaseline(nonGear);
+    }
+
+    private static GearEffectVerification VerifyCommittedGearEffects(object hero, object talentData, GearAbilityBaseline abilityBaseline, string scope)
+    {
+        var items = GetGearSlots().Select(slot => GetEquippedItem(hero, slot.Part, slot.MainWeapon))
+            .Where(item => item is not null).Cast<object>().ToList();
+        var expectedGearAbilityCounts = GetExpectedGearAbilityCounts(items);
+
+        var expectedSetEffectIds = new List<int>();
+        foreach (var group in items.Select(item =>
+                 {
+                     var equip = Read(item, "itemEquipData");
+                     return ReadNullableInt(Read(equip, "tEquipSetsData"), "id")
+                            ?? ReadNullableInt(Read(equip, "tEquipData"), "setsId") ?? 0;
+                 })
+                 .Where(id => id > 0).GroupBy(id => id))
+        {
+            if (!GetSetEffectScoreRows().TryGetValue(group.Key, out var effects)) continue;
+            var active = effects.Where(effect => effect.Pieces <= group.Count()).ToList();
+            expectedSetEffectIds.AddRange(active.Select(effect => effect.EffectId));
+        }
+
+        var expectedAbilityCounts = new Dictionary<int, int>(abilityBaseline.NonGearCounts);
+        foreach (var (id, count) in expectedGearAbilityCounts)
+            expectedAbilityCounts[id] = expectedAbilityCounts.GetValueOrDefault(id) + count;
+        var actualAbilityCounts = GetHeroAbilityCounts(hero);
+        var abilityRows = expectedAbilityCounts.Keys.Union(actualAbilityCounts.Keys)
+            .Select(id => (Id: id, Expected: expectedAbilityCounts.GetValueOrDefault(id), Actual: actualAbilityCounts.GetValueOrDefault(id)))
+            .ToList();
+        var missingAbilityRows = abilityRows
+            .Where(entry => entry.Actual < entry.Expected)
+            .ToList();
+        var unexpectedAbilityRows = abilityRows
+            .Where(entry => entry.Actual > entry.Expected)
+            .ToList();
+        var missingAbilities = missingAbilityRows
+            .Select(entry => $"{entry.Id}:{entry.Actual}/{entry.Expected}").ToList();
+        var unexpectedAbilities = unexpectedAbilityRows
+            .Select(entry => $"{entry.Id}:{entry.Actual}/{entry.Expected}").ToList();
+
+        var expectedExtraTalents = items.SelectMany(CollectRunewordAffixes)
+            .Select(ResolveRuntimeAffix)
+            .Where(affix => (ReadNullableInt(Read(affix, "tAffixData"), "effectType") ?? 0) == 100)
+            .Select(affix =>
+            {
+                var save = Read(affix, "saveData");
+                var talent = Read(affix, "tTalentData")
+                             ?? InvokeStatic("TableData", "getTTalentData", ReadNullableInt(save, "talentId") ?? 0);
+                return (Id: ReadNullableInt(talent, "id") ?? ReadNullableInt(save, "talentId") ?? 0,
+                    Level: Math.Max(0, ReadNullableInt(save, "talentLevel") ?? 0));
+            })
+            .Where(entry => entry.Id > 0).ToList();
+        var actualExtraTalents = ReadList(Read(talentData, "extraTalentList"))
+            .Where(talent => ReadBool(Read(talent, "isRuneWords")))
+            .Select(talent => (Id: ReadNullableInt(Read(talent, "tTalentData"), "id") ?? 0,
+                Level: GetSavedTalentLevel(talent)))
+            .Where(entry => entry.Id > 0).ToList();
+        var remainingActualExtra = actualExtraTalents.ToList();
+        var missingExtraTalents = new List<string>();
+        foreach (var expected in expectedExtraTalents.OrderByDescending(entry => entry.Level))
+        {
+            var index = remainingActualExtra.FindIndex(actual => actual.Id == expected.Id && actual.Level == expected.Level);
+            if (index >= 0) remainingActualExtra.RemoveAt(index);
+            else missingExtraTalents.Add($"{expected.Id}@{expected.Level}");
+        }
+        var unexpectedExtraTalents = remainingActualExtra.Select(entry => $"{entry.Id}@{entry.Level}").ToList();
+
+        var actualSetEffectIds = ReadList(Read(Read(hero, "heroEquipData"), "activeSetsEffectList"))
+            .Select(effect => ReadNullableInt(Read(effect, "tSetEffectData"), "id") ?? 0)
+            .Where(id => id > 0).ToList();
+        var missingSetEffects = expectedSetEffectIds.Where(id => !actualSetEffectIds.Contains(id)).Distinct().ToList();
+        var unexpectedSetEffects = actualSetEffectIds.Where(id => !expectedSetEffectIds.Contains(id)).Distinct().ToList();
+        Plugin.DiagInfo($"{scope} EFFECTS|abilityExact={actualAbilityCounts.Values.Sum()}/{expectedAbilityCounts.Values.Sum()}|newGearAbilities={expectedGearAbilityCounts.Values.Sum()}|extraTalents={expectedExtraTalents.Count - missingExtraTalents.Count}/{expectedExtraTalents.Count}|setEffects={expectedSetEffectIds.Count - missingSetEffects.Count}/{expectedSetEffectIds.Count}|missingAbilities={string.Join(',', missingAbilities)}|unexpectedAbilities={string.Join(',', unexpectedAbilities)}|missingExtra={string.Join(',', missingExtraTalents)}|unexpectedExtra={string.Join(',', unexpectedExtraTalents)}|missingSets={string.Join(',', missingSetEffects)}|unexpectedSets={string.Join(',', unexpectedSetEffects)}");
+        if (missingAbilities.Count > 0 || unexpectedAbilities.Count > 0 || missingExtraTalents.Count > 0 || unexpectedExtraTalents.Count > 0
+            || missingSetEffects.Count > 0 || unexpectedSetEffects.Count > 0)
+            Plugin.DiagWarning($"{scope} EFFECT VERIFICATION FAILED|missingAbilities={string.Join(',', missingAbilities)}|unexpectedAbilities={string.Join(',', unexpectedAbilities)}|missingExtra={string.Join(',', missingExtraTalents)}|unexpectedExtra={string.Join(',', unexpectedExtraTalents)}|missingSets={string.Join(',', missingSetEffects)}|unexpectedSets={string.Join(',', unexpectedSetEffects)}");
+        return new GearEffectVerification(missingAbilities, unexpectedAbilities, missingExtraTalents, unexpectedExtraTalents, missingSetEffects, unexpectedSetEffects);
     }
 
     private static object? GetEquippedItem(object hero, int part, bool main)
@@ -4079,6 +5843,12 @@ internal static class GameInventoryReader
         var partType = CreateEnum("EEquipPart", part);
         return partType is null ? null : InvokeInstance(hero, "GetEquipByPart", partType, main);
     }
+
+    private static bool IsVerifiedHeroEquipField(object hero, object item, object destination)
+        => NativeEquals(Read(destination, "itemData"), item)
+           && NativeEquals(InvokeStatic("HeroEquipData", "GetHeroDataByField", destination), hero)
+           && NativeEquals(Read(item, "ownerHeroData"), hero)
+           && NativeEquals(InvokeStatic("ItemSys", "FindHeroEquipFieldByItem", item), destination);
 
     private static bool TryEquipCandidate(object hero, GearCandidate candidate, GearSlot slot, object? seasonData, List<MoveReceipt> moveJournal, IReadOnlyCollection<object> targetItems, IReadOnlyCollection<object> treasureTargetItems, out int moveCode, out string failure)
     {
@@ -4094,7 +5864,9 @@ internal static class GameInventoryReader
         if (NativeEquals(Read(destination, "itemData"), item))
         {
             moveCode = 0;
-            return true;
+            if (IsVerifiedHeroEquipField(hero, item, destination)) return true;
+            failure = "the item pointer is present, but hero ownership verification failed";
+            return false;
         }
 
         var source = InvokeStatic("ItemSys", "FindHeroEquipFieldByItem", item)
@@ -4126,7 +5898,9 @@ internal static class GameInventoryReader
         if (NativeEquals(source, destination))
         {
             moveCode = 0;
-            return NativeEquals(Read(destination, "itemData"), item);
+            if (IsVerifiedHeroEquipField(hero, item, destination)) return true;
+            failure = "the source and destination match, but hero ownership verification failed";
+            return false;
         }
         var sourceWasBag = NativeEquals(InvokeStatic("ItemSys", "FindLordInventoryFieldByItem", item), source);
 
@@ -4152,10 +5926,7 @@ internal static class GameInventoryReader
         var sourceMatches = NativeStateEquals(Read(source, "itemData"), beforeTo);
         if (destinationMatches && sourceMatches)
             moveJournal.Add(new MoveReceipt(MoveReceiptKind.FieldMove, source, destination, beforeFrom!, beforeTo));
-        var destinationHeroMatches = NativeEquals(InvokeStatic("HeroEquipData", "GetHeroDataByField", destination), hero);
-        var ownerMatches = NativeEquals(Read(item, "ownerHeroData"), hero);
-        var resolvedFieldMatches = NativeEquals(InvokeStatic("ItemSys", "FindHeroEquipFieldByItem", item), destination);
-        if (destinationMatches && sourceMatches && destinationHeroMatches && ownerMatches && resolvedFieldMatches)
+        if (destinationMatches && sourceMatches && IsVerifiedHeroEquipField(hero, item, destination))
         {
             var needsTreasureBagSpace = treasureTargetItems.Any(target => InvokeStatic("ItemSys", "FindHeroEquipFieldByItem", target) is null
                 && InvokeStatic("ItemSys", "FindLordInventoryFieldByItem", target) is null);
@@ -4340,12 +6111,12 @@ internal static class GameInventoryReader
                     if (destination is null || (vaultRouted && destination.StorageSource != StorageSource.Treasure)
                         || (!vaultRouted && destination.StorageSource != StorageSource.Warehouse))
                         throw new InvalidOperationException("native storage normalization used an unexpected destination");
-                    Plugin.Logger.LogInfo($"AUTO-GEAR STORAGE NORMALIZED|item={key}|destination={destination.StorageSource}");
+                    Plugin.DiagInfo($"AUTO-GEAR STORAGE NORMALIZED|item={key}|destination={destination.StorageSource}");
                 }
                 catch (Exception error)
                 {
                     failures++;
-                    Plugin.Logger.LogWarning($"AUTO-GEAR STORAGE NORMALIZE FAILED|item={key}|{error.GetBaseException().Message}");
+                    Plugin.DiagWarning($"AUTO-GEAR STORAGE NORMALIZE FAILED|item={key}|{error.GetBaseException().Message}");
                 }
                 return;
             }
@@ -4356,7 +6127,7 @@ internal static class GameInventoryReader
             {
                 handled.Add(key);
                 failures++;
-                Plugin.Logger.LogWarning($"AUTO-GEAR STORAGE NORMALIZE FAILED|item={key}|staged item was not found in bag, Warehouse, or Vault");
+                Plugin.DiagWarning($"AUTO-GEAR STORAGE NORMALIZE FAILED|item={key}|staged item was not found in bag, Warehouse, or Vault");
                 return;
             }
             handled.Add(key);
@@ -4370,12 +6141,12 @@ internal static class GameInventoryReader
                     && NativeEquals(record.ItemData, item));
                 if (!movedToVault)
                     throw new InvalidOperationException("native Vault normalization did not move the item");
-                Plugin.Logger.LogInfo($"AUTO-GEAR STORAGE NORMALIZED|item={key}|destination=Vault");
+                Plugin.DiagInfo($"AUTO-GEAR STORAGE NORMALIZED|item={key}|destination=Vault");
             }
             catch (Exception error)
             {
                 failures++;
-                Plugin.Logger.LogWarning($"AUTO-GEAR STORAGE NORMALIZE FAILED|item={key}|{error.GetBaseException().Message}");
+                Plugin.DiagWarning($"AUTO-GEAR STORAGE NORMALIZE FAILED|item={key}|{error.GetBaseException().Message}");
             }
         }
     }
@@ -4395,8 +6166,7 @@ internal static class GameInventoryReader
                         || Read(receipt.FromField, "itemData") is not null
                         || !IsItemInVaultGroup(receipt.BeforeFromItem, receipt.GroupData))
                         throw new InvalidOperationException("Vault deposit state no longer matches the recorded move");
-                    if (!ReadBool(InvokeRequiredInstance(receipt.TreasureData, "TryTakeEquip", receipt.GroupData, receipt.BeforeFromItem)))
-                        throw new InvalidOperationException("Vault item could not be returned to the bag");
+                    InvokeRequiredStaticMany("ItemSys", "QuickMoveTreasureEquipToBag", receipt.GroupData, receipt.BeforeFromItem);
                     var actualBagField = InvokeStatic("ItemSys", "FindLordInventoryFieldByItem", receipt.BeforeFromItem)
                                          ?? throw new InvalidOperationException("returned Vault item was not found in the bag");
                     if (!NativeEquals(actualBagField, receipt.FromField))
@@ -4433,11 +6203,11 @@ internal static class GameInventoryReader
             catch (Exception error)
             {
                 failures++;
-                Plugin.Logger.LogWarning($"AUTO-GEAR ROLLBACK FAILED|index={index}|reason={error.GetBaseException().Message}");
+                Plugin.DiagWarning($"AUTO-GEAR ROLLBACK FAILED|index={index}|reason={error.GetBaseException().Message}");
             }
         }
         if (receiptCount > 0)
-            Plugin.Logger.LogInfo($"AUTO-GEAR ROLLBACK|moves={receiptCount}|failures={failures}");
+            Plugin.DiagInfo($"AUTO-GEAR ROLLBACK|moves={receiptCount}|failures={failures}");
         moveJournal.Clear();
         return failures;
     }
@@ -4479,7 +6249,7 @@ internal static class GameInventoryReader
             .Select(house => Read(house, "houseStoreData")).FirstOrDefault(store => Read(store, "storeTreaData") is not null);
         var treasure = Read(houseStoreData, "storeTreaData");
         if (treasure is null || record.GroupData is null) return false;
-        if (!ReadBool(InvokeRequiredInstance(treasure, "TryTakeEquip", record.GroupData, record.ItemData))) return false;
+        InvokeRequiredStaticMany("ItemSys", "QuickMoveTreasureEquipToBag", record.GroupData, record.ItemData);
         var extractedBagField = InvokeStatic("ItemSys", "FindLordInventoryFieldByItem", record.ItemData);
         if (extractedBagField is null) return false;
         moveJournal.Add(new MoveReceipt(MoveReceiptKind.VaultToBag, null, extractedBagField, record.ItemData, null, treasure, record.GroupData));
@@ -4498,7 +6268,51 @@ internal static class GameInventoryReader
     }
 
     private static int KeywordScore(string text, IEnumerable<string> words)
-        => words.Count(word => text.Contains(word, StringComparison.OrdinalIgnoreCase));
+    {
+        // Match complete ASCII words/phrases. The old substring check counted
+        // `ice` inside justice/sacrifice/price and could select an Ice guide with
+        // no ice effect at all. Morphological aliases are one evidence family,
+        // preventing burn+burning or crit+critical from double weighting a row.
+        var haystack = $" {Regex.Replace((text ?? string.Empty).ToLowerInvariant(), "[^a-z0-9]+", " ").Trim()} ";
+        return words.Select(NormalizeKeyword)
+            .Where(word => word.Length > 0)
+            .GroupBy(KeywordFamily, StringComparer.Ordinal)
+            .Count(group => KeywordFamilyForms(group.Key, group).Any(form =>
+                haystack.Contains($" {NormalizeKeyword(form)} ", StringComparison.Ordinal)));
+    }
+
+    private static string NormalizeKeyword(string value)
+        => Regex.Replace((value ?? string.Empty).ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
+
+    private static string KeywordFamily(string word) => word switch
+    {
+        "burn" or "burning" => "burn",
+        "freeze" or "frozen" => "freeze",
+        "shock" or "shocked" => "shock",
+        "summon" or "summoned" => "summon",
+        "bleed" or "bleeding" => "bleed",
+        "crit" or "critical" or "critical strike" => "critical",
+        "corrosion" or "corrode" => "corrosion",
+        "immunity" or "immune" => "immune",
+        "defense" or "defence" => "defense",
+        "armor" or "armour" => "armor",
+        _ => word
+    };
+
+    private static IEnumerable<string> KeywordFamilyForms(string family, IEnumerable<string> declared) => family switch
+    {
+        "burn" => new[] { "burn", "burning" },
+        "freeze" => new[] { "freeze", "frozen" },
+        "shock" => new[] { "shock", "shocked" },
+        "summon" => new[] { "summon", "summoned" },
+        "bleed" => new[] { "bleed", "bleeding" },
+        "critical" => new[] { "crit", "critical", "critical strike" },
+        "corrosion" => new[] { "corrosion", "corrode" },
+        "immune" => new[] { "immunity", "immune" },
+        "defense" => new[] { "defense", "defence" },
+        "armor" => new[] { "armor", "armour" },
+        _ => declared
+    };
 
     private static readonly string[] PhysicalWords = { "physical", "martial", "strike", "blunt", "slash", "pierce", "strength", "dexterity", "weapon", "crit" };
     private static readonly string[] ElementalWords = { "elemental", "spell", "fire", "frost", "ice", "lightning", "intelligence", "mana", "magic" };
@@ -4510,7 +6324,7 @@ internal static class GameInventoryReader
     private static readonly string[] CorrosionWords = { "corrosion", "corrode", "poison", "toxic", "acid" };
     private static readonly string[] CriticalWords = { "crit", "critical", "critical strike" };
     private static readonly string[] SupportWords = { "support", "heal", "restore", "aura", "buff", "ally", "shield", "warcry", "recovery" };
-    private static readonly string[] TankWords = { "defense", "defence", "health", "resist", "block", "survival", "damage taken", "toughness", "immunity" };
+    private static readonly string[] TankWords = { "defense", "defence", "health", "resist", "block", "survival", "damage taken", "damage reduction", "toughness", "immunity", "immune", "shield", "barrier", "guard", "ward", "shelter", "armor", "armour", "fortitude", "lifesteal" };
 
     private static object? CreateEnum(string typeName, int value)
     {
@@ -4551,6 +6365,36 @@ internal static class GameInventoryReader
         foreach (var item in Enumerate(value)) yield return item;
     }
 
+    private static List<object> ReadRequiredSequenceProperty(object owner, string propertyName)
+    {
+        var value = ReadRequiredProperty(owner, propertyName)
+                    ?? throw new InvalidOperationException($"{owner.GetType().Name}.{propertyName} is null.");
+        var getItem = value.GetType().GetMethod("get_Item", new[] { typeof(int) })
+                      ?? throw new MissingMethodException(value.GetType().FullName, "get_Item");
+        var countProperty = value.GetType().GetProperty("Count", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                            ?? value.GetType().GetProperty("Length", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                            ?? throw new MissingMemberException(value.GetType().FullName, "Count/Length");
+        var count = Convert.ToInt32(countProperty.GetValue(value)
+                                    ?? throw new InvalidOperationException($"{propertyName} count is null."), CultureInfo.InvariantCulture);
+        if (count is < 0 or > 20000) throw new InvalidOperationException($"{propertyName} count is invalid ({count}).");
+        var result = new List<object>(count);
+        for (var index = 0; index < count; index++)
+        {
+            try
+            {
+                var item = getItem.Invoke(value, new object[] { index })
+                           ?? throw new InvalidOperationException($"{propertyName}[{index}] is null.");
+                result.Add(item);
+            }
+            catch (TargetInvocationException error) when (error.InnerException is not null)
+            {
+                throw new InvalidOperationException($"Could not read {propertyName}[{index}]: {error.InnerException.Message}", error.InnerException);
+            }
+        }
+        return result;
+    }
+
+    [Conditional("PATHOFIDLE_DIAGNOSTICS")]
     private static void LogSupportedLanguagesOnce()
     {
         if (languageTableLogged) return;
@@ -4567,7 +6411,7 @@ internal static class GameInventoryReader
             }
             if (rows.Count == 0) return;
             languageTableLogged = true;
-            Plugin.Logger.LogInfo($"Game language table: {string.Join(", ", rows)}");
+            Plugin.DiagInfo($"Game language table: {string.Join(", ", rows)}");
         }
         catch
         {
@@ -4586,12 +6430,14 @@ internal static class GameInventoryReader
         if (bagData is null || itemType is null) throw new InvalidOperationException("Inventory is unavailable.");
 
         var equipmentType = Enum.ToObject(itemType, 2);
-        var inventoryFields = InvokeInstance(bagData, "GetFieldList", equipmentType);
+        var inventoryFields = InvokeRequiredInstance(bagData, "GetFieldList", equipmentType);
         foreach (var (field, index) in ReadList(inventoryFields).Select((field, index) => (field, index)))
         {
             var item = Read(field, "itemData");
-            if (item is null) continue;
-            result.Add(DescribeItem(item, UiText.L($"인벤토리 #{index + 1}", $"Inventory #{index + 1}", $"背包 #{index + 1}", $"背包 #{index + 1}"), StorageKind.Inventory, StorageSource.Inventory, field));
+            // GetFieldList returns the general bag list for equipment/tool enum
+            // values; filter by the item's real saved type before describing it.
+            if (!IsEquipmentItem(item)) continue;
+            result.Add(DescribeItem(item!, UiText.L($"인벤토리 #{index + 1}", $"Inventory #{index + 1}", $"背包 #{index + 1}", $"背包 #{index + 1}"), StorageKind.Inventory, StorageSource.Inventory, field));
         }
 
         if (!includeWarehouse) return result;
@@ -4629,119 +6475,293 @@ internal static class GameInventoryReader
         return result;
     }
 
-    public static (int EquipmentBoxes, int RuneBoxes) GetBulkToolCounts(int qualityMask, bool atLeast)
+    public static (bool Success, int EquipmentBoxes, int RuneBoxes) GetBulkToolCounts(int qualityMask, bool atLeast)
     {
         try
         {
             var stacks = ReadBulkToolStacks().Where(stack => QualityFilterLogic.Matches(stack.Quality, qualityMask, atLeast)).ToList();
-            return (
+            bulkCountFailureLogged = false;
+            return (true,
                 stacks.Where(stack => stack.Kind == BulkToolKind.EquipmentBox).Sum(stack => stack.Count),
                 stacks.Where(stack => stack.Kind == BulkToolKind.RuneBox).Sum(stack => stack.Count));
         }
-        catch
+        catch (Exception error)
         {
-            return (0, 0);
+            if (!bulkCountFailureLogged)
+            {
+                bulkCountFailureLogged = true;
+                Plugin.DiagWarning($"BULK TOOL COUNT FAILED|counts are unavailable, not zero|{error.GetBaseException().Message}");
+            }
+            return (false, 0, 0);
         }
     }
 
-    public static bool TryOpenAll(BulkToolKind kind, int qualityMask, bool atLeast, bool autoStoreEquipment, out string message)
+    public static bool TryBeginBulkOpen(BulkToolKind kind, int qualityMask, bool atLeast,
+        bool autoStoreEquipment, string label, out BulkOpenSession session, out string message)
     {
-        var label = kind == BulkToolKind.RuneBox
-            ? UiText.L("룬 상자", "rune boxes", "符文箱", "符文箱")
-            : UiText.L("장비 상자", "gear boxes", "装备箱", "裝備箱");
+        session = null!;
         try
         {
             var dataManager = ReadStatic("Game", "dataMgr");
-            var seasonData = Read(dataManager, "nowSeasonData");
-            var lordData = Read(seasonData, "lordData");
-            var bagData = Read(lordData, "lordBagData");
-            if (bagData is null)
-            {
-                message = UiText.L("인벤토리 데이터를 찾지 못했습니다.", "Inventory data was not found.", "未找到背包数据。", "找不到背包資料。");
-                return false;
-            }
-
-            var initial = ReadBulkToolStacks().Where(stack => stack.Kind == kind && QualityFilterLogic.Matches(stack.Quality, qualityMask, atLeast)).Sum(stack => stack.Count);
+            var seasonData = Read(dataManager, "nowSeasonData")
+                             ?? throw new InvalidOperationException("Season data is unavailable.");
+            var lordData = Read(seasonData, "lordData")
+                           ?? throw new InvalidOperationException("Lord data is unavailable.");
+            var bagData = Read(lordData, "lordBagData")
+                          ?? throw new InvalidOperationException("Inventory data is unavailable.");
+            var initial = ReadBulkToolStacks()
+                .Where(stack => stack.Kind == kind && QualityFilterLogic.Matches(stack.Quality, qualityMask, atLeast))
+                .Sum(stack => stack.Count);
             if (initial <= 0)
             {
                 message = UiText.L($"열 수 있는 {label}가 없습니다.", $"There are no {label} to open.", $"没有可开启的{label}。", $"沒有可開啟的{label}。");
                 return false;
             }
 
-            var opened = 0;
-            var autoStored = 0;
-            var knownEquipment = new HashSet<string>(ReadInventoryEquipment().Select(entry => entry.Key), StringComparer.Ordinal);
-            var blockedStacks = new HashSet<string>(StringComparer.Ordinal);
-            for (var guard = 0; guard < 512; guard++)
+            session = new BulkOpenSession
             {
-                var available = ReadBulkToolStacks()
-                    .Where(stack => stack.Kind == kind && stack.Count > 0 && QualityFilterLogic.Matches(stack.Quality, qualityMask, atLeast) && !blockedStacks.Contains(stack.Key))
-                    .OrderByDescending(stack => stack.Count)
-                    .ToList();
-                if (available.Count == 0) break;
-
-                var stack = available[0];
-                var request = stack.Count;
-                var progressed = false;
-                while (request >= 1)
-                {
-                    var before = ReadBulkToolStacks().Where(entry => entry.Kind == kind && QualityFilterLogic.Matches(entry.Quality, qualityMask, atLeast)).Sum(entry => entry.Count);
-                    InvokeInstance(bagData, "UseToolCount", stack.ItemData, request, true);
-                    var after = ReadBulkToolStacks().Where(entry => entry.Kind == kind && QualityFilterLogic.Matches(entry.Quality, qualityMask, atLeast)).Sum(entry => entry.Count);
-                    if (after < before)
-                    {
-                        opened += before - after;
-                        if (autoStoreEquipment && kind == BulkToolKind.EquipmentBox)
-                            autoStored += AutoStoreNewInventoryEquipment(knownEquipment);
-                        progressed = true;
-                        break;
-                    }
-
-                    if (request == 1) break;
-                    request = Math.Max(1, request / 2);
-                }
-
-                if (!progressed) blockedStacks.Add(stack.Key);
-            }
-
-            var remaining = ReadBulkToolStacks().Where(stack => stack.Kind == kind && QualityFilterLogic.Matches(stack.Quality, qualityMask, atLeast)).Sum(stack => stack.Count);
-            if (opened <= 0)
-            {
-                message = UiText.L($"{label}를 열 수 없습니다. 인벤토리 공간을 확인하세요.", $"Could not open {label}. Check inventory space.", $"无法开启{label}。请检查背包空间。", $"無法開啟{label}。請檢查背包空間。");
-                return false;
-            }
-
-            message = remaining > 0
-                ? UiText.L(
-                    $"{label} {opened:N0}개 개봉 완료 · 공간 부족으로 {remaining:N0}개 남음",
-                    $"Opened {opened:N0} {label} · {remaining:N0} left due to limited space",
-                    $"已开启 {opened:N0} 个{label} · 空间不足，剩余 {remaining:N0} 个",
-                    $"已開啟 {opened:N0} 個{label} · 空間不足，剩餘 {remaining:N0} 個")
-                : UiText.L(
-                    $"{label} {opened:N0}개 모두 개봉 완료",
-                    $"Opened all {opened:N0} {label}",
-                    $"已开启全部 {opened:N0} 个{label}",
-                    $"已開啟全部 {opened:N0} 個{label}");
-            if (autoStored > 0) message += UiText.L($" · 새 장비 {autoStored:N0}개 자동 창고", $" · auto-stored {autoStored:N0} new gear", $" · 自动入库 {autoStored:N0} 件新装备", $" · 自動入庫 {autoStored:N0} 件新裝備");
+                Kind = kind,
+                QualityMask = qualityMask,
+                AtLeast = atLeast,
+                AutoStoreEquipment = autoStoreEquipment,
+                Label = label,
+                Initial = initial,
+                SaveIdentity = NativeObjectKey(seasonData, seasonData),
+                KnownEquipment = kind == BulkToolKind.EquipmentBox
+                    ? new HashSet<string>(ReadInventoryEquipment().Select(entry => entry.Key), StringComparer.Ordinal)
+                    : new HashSet<string>(StringComparer.Ordinal)
+            };
+            message = UiText.L(
+                $"{label} {initial:N0}개 개봉을 시작했습니다.",
+                $"Started opening {initial:N0} {label}.",
+                $"已开始开启 {initial:N0} 个{label}。",
+                $"已開始開啟 {initial:N0} 個{label}。");
             return true;
         }
         catch (Exception error)
         {
-            message = UiText.L($"{label} 일괄 개봉 실패: {error.GetBaseException().Message}", $"Bulk opening {label} failed: {error.GetBaseException().Message}", $"批量开启{label}失败：{error.GetBaseException().Message}", $"批次開啟{label}失敗：{error.GetBaseException().Message}");
+            message = UiText.L(
+                $"{label} 개봉을 시작하지 못했습니다: {error.GetBaseException().Message}",
+                $"Could not start opening {label}: {error.GetBaseException().Message}",
+                $"无法开始开启{label}：{error.GetBaseException().Message}",
+                $"無法開始開啟{label}：{error.GetBaseException().Message}");
             return false;
         }
     }
 
-    private static int AutoStoreNewInventoryEquipment(HashSet<string> knownEquipment)
+    public static (bool Finished, bool Success, string Message) AdvanceBulkOpen(BulkOpenSession session)
+    {
+        const int batchCap = 1;
+        try
+        {
+            if (session.CancelRequested)
+                return FinishBulkOpenSession(session, true, false, null);
+
+            var dataManager = ReadStatic("Game", "dataMgr");
+            var seasonData = Read(dataManager, "nowSeasonData")
+                             ?? throw new InvalidOperationException("Season data is unavailable.");
+            if (!string.Equals(NativeObjectKey(seasonData, seasonData), session.SaveIdentity, StringComparison.Ordinal))
+                throw new InvalidOperationException("The active save changed during bulk opening.");
+            var lordData = Read(seasonData, "lordData")
+                           ?? throw new InvalidOperationException("Lord data is unavailable.");
+            var bagData = Read(lordData, "lordBagData")
+                          ?? throw new InvalidOperationException("Inventory data is unavailable.");
+
+            var stacks = ReadBulkToolStacks()
+                .Where(stack => stack.Kind == session.Kind && stack.Count > 0
+                                && QualityFilterLogic.Matches(stack.Quality, session.QualityMask, session.AtLeast))
+                .ToList();
+            var remaining = stacks.Sum(stack => stack.Count);
+            if (session.Opened >= session.Initial || remaining <= 0)
+                return FinishBulkOpenSession(session, false, false, remaining);
+
+            var stack = stacks.Where(entry => !session.BlockedStacks.Contains(entry.Key))
+                .OrderByDescending(entry => entry.Count).FirstOrDefault();
+            if (stack is null)
+                return FinishBulkOpenSession(session, false, false, remaining);
+
+            var remainingTarget = Math.Max(1, session.Initial - session.Opened);
+            var request = Math.Min(Math.Min(stack.Count, remainingTarget), batchCap);
+            request = Math.Max(1, request);
+            var beforeStackCount = stack.Count;
+            var beforeItems = CaptureBagWalletItemSnapshot(lordData);
+            session.MutationAttempted = true;
+            var rewardValue = InvokeRequiredInstance(bagData, "UseToolCount", stack.ItemData, request, true);
+            var rewards = ReadList(rewardValue).ToList();
+            var afterStacks = ReadBulkToolStacks()
+                .Where(entry => entry.Kind == session.Kind
+                                && QualityFilterLogic.Matches(entry.Quality, session.QualityMask, session.AtLeast))
+                .ToList();
+            var afterStackCount = afterStacks.FirstOrDefault(entry => string.Equals(entry.Key, stack.Key, StringComparison.Ordinal))?.Count ?? 0;
+            var consumed = Math.Max(0, beforeStackCount - afterStackCount);
+            if (consumed > 0)
+            {
+                session.Opened += consumed;
+                if (session.AutoStoreEquipment && session.Kind == BulkToolKind.EquipmentBox)
+                    session.AutoStored += AutoStoreNewInventoryEquipment(session.KnownEquipment, session.FailedAutoStore, rewards);
+            }
+            else
+            {
+                var afterItems = CaptureBagWalletItemSnapshot(lordData);
+                session.BlockedStacks.Add(stack.Key);
+                var partialReward = HasPositiveItemDelta(beforeItems, afterItems);
+                return FinishBulkOpenSession(session, false, true, afterStacks.Sum(entry => entry.Count),
+                    partialReward
+                        ? UiText.L("상자는 줄지 않았지만 일부 보상이 추가되어 재시도를 중단했습니다.",
+                            "The box was not consumed, but partial rewards were added; retry was stopped to prevent duplication.",
+                            "箱子未消耗，但已加入部分奖励；为防止重复，已停止重试。",
+                            "箱子未消耗，但已加入部分獎勵；為防止重複，已停止重試。")
+                        : UiText.L("게임이 이 상자 개봉을 거부했습니다. 일부 재화 변경 가능성이 있어 재시도 없이 중단했습니다.",
+                            "The game refused this box. A partial resource change is possible, so bulk opening stopped without retrying.",
+                            "游戏拒绝开启此箱子。可能已有部分资源变化，因此已停止且不会重试。",
+                            "遊戲拒絕開啟此箱子。可能已有部分資源變更，因此已停止且不會重試。"));
+            }
+
+            var progress = UiText.L(
+                $"{session.Label} 개봉 중 · 확인 {session.Opened:N0}/{session.Initial:N0}개",
+                $"Opening {session.Label} · confirmed {session.Opened:N0}/{session.Initial:N0}",
+                $"正在开启{session.Label} · 已确认 {session.Opened:N0}/{session.Initial:N0}",
+                $"正在開啟{session.Label} · 已確認 {session.Opened:N0}/{session.Initial:N0}");
+            return (false, true, progress);
+        }
+        catch (Exception error)
+        {
+            int? remaining = null;
+            try
+            {
+                remaining = ReadBulkToolStacks()
+                    .Where(stack => stack.Kind == session.Kind
+                                    && QualityFilterLogic.Matches(stack.Quality, session.QualityMask, session.AtLeast))
+                    .Sum(stack => stack.Count);
+            }
+            catch { }
+            return FinishBulkOpenSession(session, false, session.MutationAttempted, remaining, error.GetBaseException().Message);
+        }
+    }
+
+    private static (bool Finished, bool Success, string Message) FinishBulkOpenSession(BulkOpenSession session,
+        bool cancelled, bool uncertain, int? remaining, string? error = null)
+    {
+        if (remaining is null)
+        {
+            try
+            {
+                remaining = ReadBulkToolStacks()
+                    .Where(stack => stack.Kind == session.Kind
+                                    && QualityFilterLogic.Matches(stack.Quality, session.QualityMask, session.AtLeast))
+                    .Sum(stack => stack.Count);
+            }
+            catch { }
+        }
+        var remainingText = remaining?.ToString("N0", CultureInfo.CurrentCulture) ?? UiText.L("확인 불가", "unknown", "未知", "未知");
+        var prefix = uncertain
+            ? UiText.L("작업 상태 확인 불가", "Outcome uncertain", "操作结果无法确认", "操作結果無法確認")
+            : cancelled
+                ? UiText.L("사용자 중단", "Cancelled", "已取消", "已取消")
+                : session.Opened >= session.Initial
+                    ? UiText.L("개봉 완료", "Opening complete", "开启完成", "開啟完成")
+                    : UiText.L("가능한 만큼 개봉 완료", "Opened as many as possible", "已尽可能开启", "已盡可能開啟");
+        var message = UiText.L(
+            $"{prefix} · {session.Label} 확인 개봉 {session.Opened:N0}/{session.Initial:N0}개 · 현재 남음 {remainingText}",
+            $"{prefix} · confirmed opened {session.Opened:N0}/{session.Initial:N0} {session.Label} · currently left {remainingText}",
+            $"{prefix} · 已确认开启 {session.Opened:N0}/{session.Initial:N0} 个{session.Label} · 当前剩余 {remainingText}",
+            $"{prefix} · 已確認開啟 {session.Opened:N0}/{session.Initial:N0} 個{session.Label} · 目前剩餘 {remainingText}");
+        if (session.AutoStored > 0)
+            message += UiText.L($" · 장비 {session.AutoStored:N0}개 자동 보관", $" · auto-stored {session.AutoStored:N0} gear", $" · 自动入库 {session.AutoStored:N0} 件装备", $" · 自動入庫 {session.AutoStored:N0} 件裝備");
+        if (session.FailedAutoStore.Count > 0)
+            message += UiText.L($" · 자동 보관 미확인 {session.FailedAutoStore.Count:N0}개", $" · storage unverified for {session.FailedAutoStore.Count:N0}", $" · {session.FailedAutoStore.Count:N0} 件入库未确认", $" · {session.FailedAutoStore.Count:N0} 件入庫未確認");
+        if (!string.IsNullOrWhiteSpace(error)) message += $" · {error}";
+        var success = !uncertain && session.FailedAutoStore.Count == 0 && (cancelled || session.Opened > 0);
+        return (true, success, message);
+    }
+
+    private static Dictionary<string, int> CaptureBagWalletItemSnapshot(object lordData)
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        var seenFields = new HashSet<string>(StringComparer.Ordinal);
+        var bagData = Read(lordData, "lordBagData")
+                      ?? throw new InvalidOperationException("Inventory data is unavailable.");
+        var walletData = Read(lordData, "lordWalletData")
+                         ?? throw new InvalidOperationException("Wallet data is unavailable.");
+        AddFields(Read(walletData, "fieldList"));
+        AddFields(Read(bagData, "fieldList"));
+        var itemType = GameType("EItemType") ?? throw new InvalidOperationException("The game item-type table is unavailable.");
+        foreach (var typeId in new[] { 1, 2, 3, 5, 10 })
+            AddFields(InvokeRequiredInstance(bagData, "GetFieldList", Enum.ToObject(itemType, typeId)));
+        return result;
+
+        void AddFields(object? fields)
+        {
+            foreach (var field in ReadList(fields))
+            {
+                var fieldKey = NativeObjectKey(field, field);
+                if (!seenFields.Add(fieldKey)) continue;
+                var item = Read(field, "itemData");
+                if (item is null) continue;
+                var save = Read(item, "saveItemData");
+                var count = Math.Max(1, ReadNullableInt(save, "count") ?? 1);
+                result[NativeObjectKey(item, field)] = count;
+            }
+        }
+    }
+
+    private static bool HasPositiveItemDelta(IReadOnlyDictionary<string, int> before, IReadOnlyDictionary<string, int> after)
+        => after.Any(entry => entry.Value > before.GetValueOrDefault(entry.Key));
+
+    private static int AutoStoreNewInventoryEquipment(HashSet<string> knownEquipment, HashSet<string> failedEquipment, IReadOnlyCollection<object> rewards)
     {
         var moved = 0;
-        foreach (var entry in ReadInventoryEquipment())
+        var rewardEquipment = rewards.Where(IsEquipmentItem).ToList();
+        var pending = ReadInventoryEquipment()
+            .Where(entry => !knownEquipment.Contains(entry.Key))
+            .Where(entry => rewardEquipment.Count == 0 || rewardEquipment.Any(reward => NativeEquals(reward, entry.ItemData)))
+            .ToList();
+        foreach (var entry in pending)
         {
-            if (!knownEquipment.Add(entry.Key)) continue;
             InvokeStaticMany("ItemSys", "QuickMoveItemFromBagToStore", entry.ItemData);
-            if (Read(entry.SourceField, "itemData") is null) moved++;
+        }
+
+        // Verify raw storage fields instead of rebuilding every translated item
+        // description after every box. A cleared bag slot alone is not enough.
+        foreach (var entry in pending)
+        {
+            var sourceCleared = Read(entry.SourceField, "itemData") is null;
+            var destinationFound = sourceCleared && IsItemInRawStorage(entry.ItemData);
+            if (destinationFound)
+            {
+                knownEquipment.Add(entry.Key);
+                failedEquipment.Remove(entry.Key);
+                moved++;
+                continue;
+            }
+
+            failedEquipment.Add(entry.Key);
+            // If the item disappeared from the source but did not appear in storage,
+            // do not claim success and do not repeatedly call move on a stale object.
+            if (sourceCleared) knownEquipment.Add(entry.Key);
         }
         return moved;
+    }
+
+    private static bool IsItemInRawStorage(object item)
+    {
+        var dataManager = ReadStatic("Game", "dataMgr");
+        var seasonData = Read(dataManager, "nowSeasonData");
+        var houseStores = ReadValues(Read(Read(seasonData, "townData"), "houseDic"))
+            .Select(house => Read(house, "houseStoreData"))
+            .Where(store => store is not null).ToList();
+        foreach (var store in houseStores)
+        {
+            foreach (var page in ReadEntries(Read(Read(store, "storeBaseData"), "storeDic")).Select(entry => Read(entry, "Value")))
+            foreach (var field in ReadList(page))
+                if (NativeEquals(Read(field, "itemData"), item)) return true;
+
+            foreach (var groupList in ReadValues(Read(Read(store, "storeTreaData"), "equipGroupDic")))
+            foreach (var group in ReadList(groupList))
+            foreach (var stored in ReadList(Read(group, "equipList")))
+                if (NativeEquals(stored, item)) return true;
+        }
+        return false;
     }
 
     private static List<InventoryEquipment> ReadInventoryEquipment()
@@ -4752,8 +6772,9 @@ internal static class GameInventoryReader
         var lordData = Read(seasonData, "lordData");
         var bagData = Read(lordData, "lordBagData");
         var itemType = GameType("EItemType");
-        if (bagData is null || itemType is null) return result;
-        var fields = InvokeInstance(bagData, "GetFieldList", Enum.ToObject(itemType, 2));
+        if (bagData is null || itemType is null)
+            throw new InvalidOperationException("Inventory equipment fields are unavailable.");
+        var fields = InvokeRequiredInstance(bagData, "GetFieldList", Enum.ToObject(itemType, 2));
         foreach (var field in ReadList(fields))
         {
             var item = Read(field, "itemData");
@@ -4773,10 +6794,13 @@ internal static class GameInventoryReader
         var bagData = Read(lordData, "lordBagData");
         var walletData = Read(lordData, "lordWalletData");
 
+        if (dataManager is null || seasonData is null || lordData is null || bagData is null || walletData is null)
+            throw new InvalidOperationException("An active save with initialized bag and wallet data is required.");
+
         AddToolFields(Read(walletData, "fieldList"));
         var itemType = GameType("EItemType");
-        if (bagData is not null && itemType is not null)
-            AddToolFields(InvokeInstance(bagData, "GetFieldList", Enum.ToObject(itemType, 10)));
+        if (itemType is null) throw new InvalidOperationException("The game item-type table is unavailable.");
+        AddToolFields(InvokeRequiredInstance(bagData, "GetFieldList", Enum.ToObject(itemType, 10)));
         return result;
 
         void AddToolFields(object? fields)
@@ -4800,7 +6824,7 @@ internal static class GameInventoryReader
 
                 var toolId = ReadNullableInt(definition, "id") ?? ReadNullableInt(save, "id") ?? 0;
                 if (loggedBulkToolQualities.Add($"{toolId}:{toolType}"))
-                    Plugin.Logger.LogInfo($"Bulk tool quality resolved: id={toolId}, type={toolType}, saveQuality={ReadNullableInt(save, "quality") ?? 0}, saveLevel={ReadNullableInt(save, "level") ?? 0}, definitionQuality={ReadNullableInt(definition, "quality") ?? 0}, resolved={quality}");
+                    Plugin.DiagInfo($"Bulk tool quality resolved: id={toolId}, type={toolType}, saveQuality={ReadNullableInt(save, "quality") ?? 0}, saveLevel={ReadNullableInt(save, "level") ?? 0}, definitionQuality={ReadNullableInt(definition, "quality") ?? 0}, resolved={quality}");
 
                 var key = NativeObjectKey(item, field);
                 if (!seen.Add(key)) continue;
@@ -4815,10 +6839,10 @@ internal static class GameInventoryReader
         // is often zero. The old null-coalescing expression treated that zero as
         // a real value, which made both equipment and rune box filters ineffective.
         var definitionQuality = ReadNullableInt(definition, "quality") ?? 0;
-        if (IsRankedQuality(definitionQuality)) return definitionQuality;
+        if (definitionQuality > 0) return definitionQuality;
 
         var savedQuality = ReadNullableInt(save, "quality") ?? 0;
-        if (IsRankedQuality(savedQuality)) return savedQuality;
+        if (savedQuality > 0) return savedQuality;
 
         // Some older tool stacks were created with their tier in SaveItemData.level.
         var savedLevel = ReadNullableInt(save, "level") ?? 0;
@@ -4833,7 +6857,7 @@ internal static class GameInventoryReader
         };
     }
 
-    private static bool IsRankedQuality(int quality) => quality is 3 or 4 or 5 or 6 or 8;
+    private static bool IsRankedQuality(int quality) => quality is >= 1 and <= 8;
 
     private static string NativeObjectKey(object item, object field)
     {
@@ -4856,8 +6880,12 @@ internal static class GameInventoryReader
             ?? Read(Read(item, "itemCurioData"), "tCurioData")
             ?? Read(item, "tItemData");
         var runtimeName = InvokeString(item, "GetName");
-        var localizedName = Clean(ReadString(definition, "name") ?? runtimeName ?? UiText.L("이름 없는 아이템", "Unnamed item", "未命名物品", "未命名物品"));
-        var englishName = Clean(EnglishName(definition, localizedName) ?? localizedName);
+        var baseLocalizedName = Clean(ReadString(definition, "name") ?? string.Empty);
+        // ItemData.GetName is the actual in-game display contract: equipment can
+        // be renamed by a runeword and forged items gain their enhancement text.
+        // Keep the table name as an additional search synonym.
+        var localizedName = FirstNonEmpty(Clean(runtimeName ?? string.Empty), baseLocalizedName, UiText.L("이름 없는 아이템", "Unnamed item", "未命名物品", "未命名物品"));
+        var englishName = Clean(EnglishName(definition, baseLocalizedName) ?? baseLocalizedName);
         var quality = ReadNullableInt(save, "quality") ?? 0;
         var qualityData = Read(item, "tItemQualityData");
         var qualityName = Clean(ReadString(qualityData, "name") ?? QualityLabel(quality));
@@ -4873,31 +6901,25 @@ internal static class GameInventoryReader
 
         var affixObjects = new List<object>();
         var affixKeys = new HashSet<string>(StringComparer.Ordinal);
-        AddAffixes(Read(equip, "affixList"));
-        AddAffixes(Read(save, "affixList"));
-        AddAffix(Read(equip, "runewordsAffixData"));
-        AddAffix(Read(save, "runewordsAffixData"));
+        // Use the same complete affix source as Auto Gear: ordinary affixes,
+        // every socket rune's affixList, and the runeword affix. The old
+        // tooltip/search path silently omitted socket-rune options.
+        foreach (var affix in CollectEquipmentAffixes(item)) AddAffix(affix);
         var itemLevel = ReadNullableInt(save, "level") ?? 0;
-        var affixes = affixObjects.Select(affix => DescribeAffix(affix, itemLevel)).Where(value => value.Length > 0).Distinct(StringComparer.CurrentCultureIgnoreCase).ToList();
+        var affixes = affixObjects.Select(affix => DescribeAffix(affix, itemLevel))
+            .Where(value => value.Length > 0)
+            .GroupBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+            .Select(group => group.Count() > 1 ? $"{group.Key} ×{group.Count()}" : group.Key)
+            .ToList();
         var affixSummary = string.Join("  ·  ", affixes);
-
-        void AddAffixes(object? values)
-        {
-            foreach (var value in ReadList(values)) AddAffix(value);
-        }
+        var multilingualAffixSearch = Clean(string.Join(" ", affixObjects.Select(GetAffixSearchText)));
 
         void AddAffix(object? value)
         {
             if (value is null) return;
-            var savedAffix = Read(value, "saveData") ?? value;
-            var key = string.Join(":", new object?[]
-            {
-                ReadNullableInt(savedAffix, "id"), ReadNullableInt(savedAffix, "quality"), ReadNullableInt(savedAffix, "level"),
-                ReadNullableInt(savedAffix, "value"), ReadNullableInt(savedAffix, "runewordsId"),
-                ReadNullableInt(savedAffix, "talentId"), ReadNullableInt(savedAffix, "abilityId")
-            }.Select(part => part?.ToString() ?? string.Empty));
-            if (key.Replace(":", string.Empty, StringComparison.Ordinal).Length == 0)
-                key = $"object:{Read(value, "Pointer") ?? value.GetHashCode()}";
+            var key = Read(value, "Pointer") is { } pointer
+                ? $"pointer:{pointer}"
+                : $"object:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value)}";
             if (affixKeys.Add(key)) affixObjects.Add(value);
         }
         var setData = Read(equip, "tEquipSetsData");
@@ -4910,6 +6932,7 @@ internal static class GameInventoryReader
         var setJob = setJobId <= 0
             ? UiText.L("모든 직업", "All classes", "所有职业", "所有職業")
             : Clean(ReadString(setJobRow, "name") ?? EnglishName(setJobRow, UiText.L($"직업 {setJobId}", $"Class {setJobId}", $"职业 {setJobId}", $"職業 {setJobId}")) ?? string.Empty);
+        var englishSetJob = setJobId <= 0 ? "All classes" : Clean(EnglishName(setJobRow, setJob) ?? setJob);
         var setMemberRows = ReadList(Read(equip, "setsNameList")).Select(member => Read(member, "tEquipData")).Where(member => member is not null).ToList();
         if (setMemberRows.Count == 0 && setId > 0)
             setMemberRows = ReadValues(ReadStatic("TableData", "TEquipDict")).Where(member => ReadNullableInt(member, "setsId") == setId).Cast<object?>().ToList();
@@ -4917,39 +6940,62 @@ internal static class GameInventoryReader
             .Where(value => value.Length > 0).Distinct(StringComparer.CurrentCultureIgnoreCase).ToList();
         var englishSetMembers = setMemberRows.Select(member => Clean(EnglishName(member, ReadString(member, "name")) ?? string.Empty))
             .Where(value => value.Length > 0).Distinct(StringComparer.CurrentCultureIgnoreCase).ToList();
+        var setWearCounts = setId > 0 ? GetSetEffectWearCounts(setId) : new Dictionary<int, int>();
         var setBonusRows = setId <= 0
             ? new List<object>()
             : ReadValues(ReadStatic("TableData", "TEquipSetsEffectDict"))
                 .Where(effect => ReadNullableInt(effect, "sesId") == setId)
+                .Where(effect => setWearCounts.Count == 0
+                                 || setWearCounts.ContainsKey(ReadNullableInt(effect, "id") ?? 0))
                 .OrderBy(effect => ReadNullableInt(effect, "index") ?? int.MaxValue).ToList();
+        var multilingualSetBonusSearch = new List<string>();
         var setBonuses = setBonusRows.Select(effect =>
         {
-            var required = ReadNullableInt(effect, "index") ?? 0;
+            var effectId = ReadNullableInt(effect, "id") ?? 0;
+            var effectIndex = ReadNullableInt(effect, "index") ?? int.MaxValue;
+            var required = setWearCounts.TryGetValue(effectId, out var exactRequired)
+                ? exactRequired
+                : Math.Max(2, effectIndex == int.MaxValue ? 2 : effectIndex * 2);
             var current = Clean(ReadString(effect, "des") ?? string.Empty);
             var english = Clean(EnglishText(effect, "_des", current) ?? current);
+            if (!string.IsNullOrWhiteSpace(current)) multilingualSetBonusSearch.Add(current);
+            if (!string.IsNullOrWhiteSpace(english)) multilingualSetBonusSearch.Add(english);
             var text = FirstNonEmpty(current, english, UiText.L("세트 효과", "Set bonus", "套装效果", "套裝效果"));
             return $"• {(required > 0 ? UiText.L($"[{required}세트] ", $"[{required} pieces] ", $"[{required}件] ", $"[{required}件] ") : string.Empty)}{text}";
         }).Where(value => value.Length > 0).ToList();
         var currentSetDescription = Clean(ReadString(setData, "des") ?? string.Empty);
-        var englishSetDescription = Clean(EnglishText(setData, "_des", currentSetDescription) ?? currentSetDescription);
-        var setDescription = FirstNonEmpty(currentSetDescription, englishSetDescription);
+        if (!string.IsNullOrWhiteSpace(currentSetDescription)) multilingualSetBonusSearch.Add(currentSetDescription);
+        var setDescription = currentSetDescription;
         if (!string.IsNullOrWhiteSpace(setDescription)) setBonuses.Insert(0, $"• {setDescription}");
         var setMembersText = setMembers.Count == 0 ? UiText.L("• 구성 장비 정보 없음", "• No set-piece information", "• 无套装部件信息", "• 無套裝部件資訊") : "• " + string.Join("\n• ", setMembers);
         var setBonusesText = setBonuses.Count == 0 ? UiText.L("• 세트 효과 정보 없음", "• No set-bonus information", "• 无套装效果信息", "• 無套裝效果資訊") : string.Join("\n", setBonuses);
         var localizedDescription = Clean(ReadString(definition, "des") ?? string.Empty);
         var englishDescription = Clean(EnglishText(definition, "_des", localizedDescription) ?? localizedDescription);
         var mainAttributeDescription = Clean(InvokeString(equip ?? item, "GetMainAttrDesc") ?? string.Empty);
-        var descriptions = new[] { localizedDescription, englishDescription, mainAttributeDescription }
+        var corruptInfo = Clean(InvokeString(save, "GetCorruptInfoText") ?? string.Empty);
+        var corruptDescription = string.IsNullOrWhiteSpace(corruptInfo)
+            ? string.Empty
+            : $"{UiText.L("타락", "Corruption", "腐化", "腐化")} · {corruptInfo}";
+        var descriptions = new[] { localizedDescription, englishDescription, mainAttributeDescription, corruptDescription }
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.CurrentCultureIgnoreCase);
         var description = string.Join("\n", descriptions);
+        var storageSearchTerms = storageSource switch
+        {
+            StorageSource.Inventory => "inventory bag 인벤토리 가방 背包",
+            StorageSource.Warehouse => "warehouse storage 창고 仓库 倉庫",
+            StorageSource.Treasure => "vault treasure storage 보관함 볼트 宝库 寶庫",
+            StorageSource.Equipped => "equipped equipment 장착 装备中 裝備中",
+            _ => string.Empty
+        };
 
         var synonyms = QualitySynonyms(quality);
         var searchText = string.Join(" ", new[]
         {
-            localizedName, englishName, qualityName, englishQualityName, synonyms, partName, englishPartName, subtypeName, englishSubtypeName, storageLabel,
-            Read(save, "type")?.ToString() ?? string.Empty, $"level {ReadNullableInt(save, "level") ?? 0}", description, affixSummary,
-            setName, englishSetName, setJob, string.Join(" ", setMembers), string.Join(" ", englishSetMembers), string.Join(" ", setBonuses)
+            localizedName, baseLocalizedName, englishName, qualityName, englishQualityName, synonyms, partName, englishPartName, subtypeName, englishSubtypeName, storageLabel,
+            storageSearchTerms,
+            Read(save, "type")?.ToString() ?? string.Empty, $"level {ReadNullableInt(save, "level") ?? 0}", description, affixSummary, multilingualAffixSearch,
+            setName, englishSetName, setJob, englishSetJob, string.Join(" ", setMembers), string.Join(" ", englishSetMembers), string.Join(" ", setBonuses), string.Join(" ", multilingualSetBonusSearch)
         });
         return new ItemSearchRecord
         {
@@ -4961,7 +7007,7 @@ internal static class GameInventoryReader
             StorageLabel = storageLabel,
             StorageKind = storageKind,
             AffixSummary = affixSummary,
-            AffixSearchText = Clean(string.Join(" ", new[] { affixSummary, setName, englishSetName, string.Join(" ", setBonuses) })),
+            AffixSearchText = Clean(string.Join(" ", new[] { affixSummary, multilingualAffixSearch, mainAttributeDescription, corruptDescription, setName, englishSetName, setJob, englishSetJob, string.Join(" ", setBonuses), string.Join(" ", multilingualSetBonusSearch) })),
             Description = description,
             SetName = setName,
             SetJob = setJob,
@@ -4990,14 +7036,12 @@ internal static class GameInventoryReader
                 return false;
             }
 
-            object? result;
             switch (item.StorageSource)
             {
                 case StorageSource.Inventory:
-                    var preferredVaultData = Read(houseStoreData, "storeTreaData");
-                    if (item.SourceField is null)
+                    if (item.SourceField is null || !NativeEquals(Read(item.SourceField, "itemData"), item.ItemData))
                     {
-                        message = UiText.L("아이템의 현재 인벤토리 칸을 찾지 못했습니다.", "The item's current inventory slot was not found.", "未找到物品当前所在的背包格。", "找不到物品目前所在的背包格。");
+                        message = UiText.L("아이템이 더 이상 표시된 인벤토리 칸에 없습니다. 새로고침 후 다시 시도하세요.", "The item is no longer in the displayed inventory slot. Refresh and try again.", "物品已不在显示的背包格中。请刷新后重试。", "物品已不在顯示的背包格中。請重新整理後再試。");
                         return false;
                     }
                     InvokeStaticMany("ItemSys", "QuickMoveItemFromBagToStore", item.ItemData);
@@ -5006,20 +7050,29 @@ internal static class GameInventoryReader
                         message = UiText.L("게임의 자동 창고 이동이 적용되지 않았습니다. 창고 또는 Vault 공간을 확인하세요.", "The game's automatic storage move failed. Check warehouse or Vault space.", "游戏自动入库失败。请检查仓库或宝库空间。", "遊戲自動入庫失敗。請檢查倉庫或寶庫空間。");
                         return false;
                     }
-                    var vaultGroup = preferredVaultData is null ? null : InvokeInstance(preferredVaultData, "FindEquipGroup", item.ItemData);
-                    message = vaultGroup is null
+                    var storedRecord = ReadAll(true).FirstOrDefault(record =>
+                        record.StorageSource is StorageSource.Warehouse or StorageSource.Treasure
+                        && NativeEquals(record.ItemData, item.ItemData));
+                    if (storedRecord is null)
+                    {
+                        message = UiText.L("인벤토리에서는 사라졌지만 창고·Vault에서 확인되지 않아 이동 완료로 처리하지 않았습니다.", "The item left the bag but was not found in warehouse/Vault, so the move was not marked complete.", "物品已离开背包，但未在仓库/宝库中找到，因此未标记为完成。", "物品已離開背包，但未在倉庫/寶庫中找到，因此未標記為完成。");
+                        return false;
+                    }
+                    message = storedRecord.StorageSource != StorageSource.Treasure
                         ? UiText.L($"{item.Name} → 일반 창고 이동 완료", $"{item.Name} → moved to warehouse", $"{item.Name} → 已移至仓库", $"{item.Name} → 已移至倉庫")
                         : UiText.L($"{item.Name} → Vault 이동 완료", $"{item.Name} → moved to Vault", $"{item.Name} → 已移至宝库", $"{item.Name} → 已移至寶庫");
                     return true;
 
                 case StorageSource.Warehouse:
-                    if (item.SourceField is null)
+                    if (item.SourceField is null || !NativeEquals(Read(item.SourceField, "itemData"), item.ItemData))
                     {
-                        message = UiText.L("아이템의 현재 창고 칸을 찾지 못했습니다.", "The item's current warehouse slot was not found.", "未找到物品当前所在的仓库格。", "找不到物品目前所在的倉庫格。");
+                        message = UiText.L("아이템이 더 이상 표시된 창고 칸에 없습니다. 새로고침 후 다시 시도하세요.", "The item is no longer in the displayed warehouse slot. Refresh and try again.", "物品已不在显示的仓库格中。请刷新后重试。", "物品已不在顯示的倉庫格中。請重新整理後再試。");
                         return false;
                     }
                     InvokeStaticMany("ItemSys", "QuickMoveItemFromStoreToBag", item.ItemData);
-                    if (Read(item.SourceField, "itemData") is not null)
+                    var warehouseBagField = InvokeStatic("ItemSys", "FindLordInventoryFieldByItem", item.ItemData);
+                    if (Read(item.SourceField, "itemData") is not null || warehouseBagField is null
+                        || !NativeEquals(Read(warehouseBagField, "itemData"), item.ItemData))
                     {
                         message = UiText.L("인벤토리가 가득 찼거나 현재 꺼낼 수 없습니다.", "The inventory is full or the item cannot be taken now.", "背包已满或当前无法取出该物品。", "背包已滿或目前無法取出該物品。");
                         return false;
@@ -5028,13 +7081,24 @@ internal static class GameInventoryReader
                     return true;
 
                 case StorageSource.Treasure:
-                    var treasureData = Read(houseStoreData, "storeTreaData");
-                    result = treasureData is null || item.GroupData is null
-                        ? null
-                        : InvokeInstance(treasureData, "TryTakeEquip", item.GroupData, item.ItemData);
-                    if (result is not bool taken || !taken)
+                    if (Read(houseStoreData, "storeTreaData") is null || item.GroupData is null)
                     {
-                        message = UiText.L("인벤토리가 가득 찼거나 보관함에서 꺼낼 수 없습니다.", "The inventory is full or the item cannot be taken from the Vault.", "背包已满或无法从宝库取出该物品。", "背包已滿或無法從寶庫取出該物品。");
+                        message = UiText.L("Vault의 아이템 그룹을 찾지 못했습니다.", "The Vault item group was not found.", "未找到宝库物品组。", "找不到寶庫物品群組。");
+                        return false;
+                    }
+                    if (!IsItemInVaultGroup(item.ItemData, item.GroupData))
+                    {
+                        message = UiText.L("아이템이 더 이상 표시된 Vault 그룹에 없습니다. 새로고침 후 다시 시도하세요.", "The item is no longer in the displayed Vault group. Refresh and try again.", "物品已不在显示的宝库组中。请刷新后重试。", "物品已不在顯示的寶庫群組中。請重新整理後再試。");
+                        return false;
+                    }
+                    // Use the public game wrapper rather than StoreTreaData's
+                    // internal data-only call. It performs the take and emits the
+                    // same bag/storage UI events and audio as a normal quick move.
+                    InvokeStaticMany("ItemSys", "QuickMoveTreasureEquipToBag", item.GroupData, item.ItemData);
+                    var vaultBagField = InvokeStatic("ItemSys", "FindLordInventoryFieldByItem", item.ItemData);
+                    if (vaultBagField is null || !NativeEquals(Read(vaultBagField, "itemData"), item.ItemData))
+                    {
+                        message = UiText.L("인벤토리가 가득 찼거나 Vault 아이템을 꺼낼 수 없습니다.", "The inventory is full or the Vault item could not be taken.", "背包已满或无法取出宝库物品。", "背包已滿或無法取出寶庫物品。");
                         return false;
                     }
                     message = UiText.L($"{item.Name} → 인벤토리 이동 완료", $"{item.Name} → moved to inventory", $"{item.Name} → 已移至背包", $"{item.Name} → 已移至背包");
@@ -5071,17 +7135,20 @@ internal static class GameInventoryReader
 
     private static string QualityLabel(int quality) => quality switch
     {
+        1 => UiText.L("일반", "Common", "普通", "普通"),
+        2 => UiText.L("고급", "Fine", "精良", "精良"),
         3 => UiText.L("희귀", "Rare", "稀有", "稀有"),
         4 => UiText.L("전설", "Legendary", "传奇", "傳奇"),
         5 => UiText.L("신화", "Mythic", "神话", "神話"),
         6 => UiText.L("세트", "Set", "套装", "套裝"),
+        7 => UiText.L("마법", "Magic", "魔法", "魔法"),
         8 => UiText.L("고유", "Unique", "独特", "獨特"),
         _ => UiText.L("기타", "Other", "其他", "其他")
     };
 
     private static string QualitySynonyms(int quality) => quality switch
     {
-        3 => "희귀 rare 稀有", 4 => "전설 legendary 传奇 傳奇", 5 => "신화 mythic 神话 神話", 6 => "세트 set 套装 套裝", 8 => "고유 unique 独特 獨特", _ => "기타 other 其他"
+        1 => "일반 common 普通", 2 => "고급 fine 精良", 3 => "희귀 rare 稀有", 4 => "전설 legendary 传奇 傳奇", 5 => "신화 mythic 神话 神話", 6 => "세트 set 套装 套裝", 7 => "마법 magic 魔法", 8 => "고유 unique 独特 獨特", _ => "기타 other 其他"
     };
 
     private static string Clean(string value) => Regex.Replace(RichText.Replace(value ?? string.Empty, " "), "\\s+", " ").Trim();
@@ -5140,6 +7207,25 @@ internal static class GameInventoryReader
         try { return value.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(value); }
         catch { return null; }
     }
+
+    private static object? ReadRequiredProperty(object value, string name)
+    {
+        var property = value.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                       ?? throw new MissingMemberException(value.GetType().FullName, name);
+        try { return property.GetValue(value); }
+        catch (TargetInvocationException error) when (error.InnerException is not null)
+        {
+            throw new InvalidOperationException($"Could not read {value.GetType().Name}.{name}: {error.InnerException.Message}", error.InnerException);
+        }
+    }
+
+    private static int ReadRequiredIntProperty(object value, string name)
+        => Convert.ToInt32(ReadRequiredProperty(value, name)
+                           ?? throw new InvalidOperationException($"{value.GetType().Name}.{name} is null."), CultureInfo.InvariantCulture);
+
+    private static bool ReadRequiredBoolProperty(object value, string name)
+        => Convert.ToBoolean(ReadRequiredProperty(value, name)
+                             ?? throw new InvalidOperationException($"{value.GetType().Name}.{name} is null."), CultureInfo.InvariantCulture);
 
     private static void Write(object value, string name, object? newValue)
     {

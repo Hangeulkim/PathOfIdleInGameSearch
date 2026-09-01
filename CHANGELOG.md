@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.4
+
+- Removed all mod diagnostic logging and debug symbols from the distributed Release DLL. Fresh BepInEx installations also start with console and disk logging disabled.
+- Reworked bulk box and rune opening into a one-item-per-frame verified session with cancellation, progress, save-identity checks, and immediate no-retry termination whenever the native game call does not consume the item, preventing duplicate partial rewards.
+- Added quality-aware bulk opening, including multi-select tiers, `or higher`, confirmation skipping, and automatic native storage routing for newly opened equipment.
+- Rebuilt Auto Skills around the selected performance objective and native same-job Shrine candidate pool, while preserving fixed and alien skills, respecting unlocked rows and weapon requirements, using the exact milestone-adjusted point budget, and failing closed when reset, transformation, or allocation verification is incomplete.
+- Enforced the game's native Mythic equipment limit, including the additional slot unlocked by the game's own level rules, while evaluating all eight equipped slots and currently worn items.
+- Improved Auto Gear scoring for real affixes, Legendary/Mythic/Unique effects, runes, skill variants, and active 2-piece/4-piece Set thresholds without treating official guide metadata as a performance bonus.
+- Fixed overlay focus, keyboard, wheel, tooltip, and transfer-button handling so only the visible panel consumes input and opaque details no longer cover usable controls.
+- Improved localized Set search/details, class display, full affix text, language refresh, and layout clipping.
+
 ## 1.1.3
 
 - Corrected Set activation thresholds to use the game's real 2-piece and 4-piece requirements, including the full 4/4 effect, and improved theme-aware Set scoring so Fire, Ice, and Lightning builds no longer reward conflicting active Sets.

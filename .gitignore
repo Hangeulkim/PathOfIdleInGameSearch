@@ -1,0 +1,7 @@
+source/bin/
+source/obj/
+.dotnet-home/
+*.log
+*.png
+PathOfIdleInGameSearch-*.zip
+

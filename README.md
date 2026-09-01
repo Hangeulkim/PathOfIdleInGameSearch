@@ -10,16 +10,21 @@ An unofficial Windows mod for searching and managing Inventory, Warehouse, and V
 - Search by name, quality, slot, level, affix, Set, and storage location.
 - Use spaces for `AND`, `|` for OR, `-word` to exclude, and `"quoted text"` for phrases.
 - Show only matching items and highlight matching text.
+- Edit the search caret with Left, Right, Home, End, Backspace, and Delete.
 - Browse Inventory and Warehouse/Vault results separately.
 - Multi-select Rare, Legendary, Mythic, Set, Unique, and Other quality filters; click a selected quality again to remove it.
 - Restrict searches to affixes and Set bonuses.
-- Hover over an item to view its full description, all affixes, Set pieces, and staged Set bonuses.
+- Hover over an item to view its full description, complete Legendary/Mythic/Unique affixes, Set class restriction, Set pieces, and staged Set bonuses.
 - Move items between Inventory and storage from the result list.
 - Use the game's own storage-routing function so unlocked quality rules determine whether gear enters the Warehouse or Vault.
 - Bulk-open equipment boxes and rune boxes with multi-select quality filters and an optional `or higher` mode.
 - Optionally skip the second confirmation click, stop when inventory space runs out, and automatically store newly opened gear.
+- Keep Search, Bulk Open, and Auto Build on separate pages with opaque detail panels.
+- Auto-equip all eight slots of the selected hero from equipped, Inventory, Warehouse, and unlocked Vault gear. The optimizer enforces the hero and active skills' weapon requirements, evaluates complete Set breakpoints and skill-specific effects, and scores expected final damage, survival, and support from a temporary copy of the game's calculated attributes.
+- Choose Auto, Physical, Elemental, Fire, Ice, Lightning, Minion, Bleed, Corrosion, Critical, Support, or Defense themes. Auto analyzes the selected hero's job and active skills.
+- Reset and auto-allocate the selected hero's skills using the matching in-game job build guide; the action stops before changing anything when the required Blood is insufficient.
 - Select preset speeds or enter any value from `0.1×` to `100×`.
-- Block game clicks and mouse-wheel input only inside the overlay.
+- Block game keyboard controls while the overlay is focused and block character-switching wheel input only while the pointer is over the focused overlay. Input outside the panel remains available.
 - Preserve window position, query, filters, speed, language, and bulk-opening preferences.
 - Follow the game's language automatically or manually select Korean, English, Simplified Chinese, or Traditional Chinese.
 
@@ -63,12 +68,15 @@ Reinstalling over an older version does not overwrite `BepInEx/config/local.path
 | Restore normal speed | `1×` |
 | View full item details | Hover over a result row |
 | Change result page | Footer buttons or the mouse wheel over the result area |
+| Choose an auto-build theme | Open `AUTO BUILD`, then select a theme before running gear or skill optimization |
 
 The `WAREHOUSE` tab includes all normal Warehouse pages and unlocked Vault quality groups. When depositing equipment, the mod calls the game's native `QuickMoveItemFromBagToStore` routine instead of guessing the destination from quality names.
 
 Search and bulk-open quality filters support multiple selections. Clicking an active quality removes it; clearing every selection returns to `All`. With `Or higher` enabled, bulk opening starts at the lowest selected ranked quality and includes every higher ranked quality. `Other` remains a separate, unranked selection.
 
 Bulk opening requires two clicks by default. Enabling `Skip confirm` makes it run immediately, so check the selected quality, available space, and `Auto storage` setting first. If space runs out, the mod opens only the amount that fits and leaves the remainder untouched. The filter applies to the boxes you own; it does not alter the random quality of generated rewards.
+
+Auto Build operates on the hero currently selected in the game. Gear optimization keeps currently equipped items in the candidate pool, searches both weapon slots plus the other six slots as one loadout, rejects weapons incompatible with the job or active skills, and evaluates affixes, granted skills, active Set thresholds, build-guide equipment, and calculated combat attributes together. Manually selected themes bias the result without overriding hard weapon requirements. Skill optimization always resets the current allocation first, uses the game's normal reset cost and validation, and then distributes available points according to the closest matching job guide and talent descriptions. Each action requires a second confirmation click.
 
 Very high speeds such as `100×` may skip short animations or timers. Return to `1×` after completing the desired action.
 

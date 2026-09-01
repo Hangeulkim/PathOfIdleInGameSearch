@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1
+
+- Made Auto Gear an exact eight-slot transaction across equipped gear, Inventory, Warehouse, and unlocked Vault storage, with per-slot verification and rollback on failure.
+- Added native Vault routing normalization after a successful loadout change, plus a safe stop and restoration when a full bag has no reversible bridge slot.
+- Corrected weapon constraints: job rules and the selected or recommended base skill remain requirements/preferences, while other active skills contribute synergy instead of becoming universal hard constraints.
+- Reworked loadout scoring around native attributes, rune affixes, active Set breakpoints, and skill synergy. It now estimates about 60 seconds of sustained single-target output from the selected base skill's native damage, cooldown, and skill-speed calculations; it remains a proxy rather than an exact combat simulation.
+- Added configurable Shrine skill transformation attempts using the normal Blood cost, with reset-cost reservation, missing-guide-skill targeting, and explicit partial-match reporting.
+- Added strictly validated skill reset and concentrated allocation into the relevant build-guide masteries that are actually available.
+- Kept a second confirmation click for both Auto Gear and Auto Skills.
+
 ## 1.1.0
 
 - Split Search, Bulk Open, and Auto Build into separate opaque pages.

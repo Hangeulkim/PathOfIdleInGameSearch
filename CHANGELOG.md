@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.5
+
+- Replaced the separate primary gear and skill optimizers with one combined Auto Build plan that jointly evaluates all eight equipment slots, base/active skill combinations, and the complete mastery/point-level vector through a bounded native 60-second preview.
+- Added a shared plan token and exact saved-level vector across selection, application, and verification. Saved, equipment-adjusted effective, and capped skill levels, learned skills, variants, spent points, and all eight equipment slots must match before success is reported.
+- Expanded final verification to cover the exact identity of all eight equipped items, learned and equipment-granted skills, variants, saved/effective/capped levels, and spent/remaining point totals.
+- Counted equipment-granted skills in performance scoring at their granted levels without consuming Shrine learned-skill slots or talent points.
+- Changed Auto elemental focus to use native skill damage types instead of localized names or descriptions.
+- Made unsupported runtime-dependent preview conditions fail closed rather than assigning speculative values. The score remains a bounded proxy and does not claim exact enemy or combat-AI DPS.
+- Made the combined application atomic across gear and skills. A post-commit failure restores the original equipment and talent rows, refunds Blood spent by that run, restores talent progress counters and saved skill preferences, and verifies the restoration before reporting failure.
+- Documented that an observed roughly 20-second optimization run is machine- and save-specific, not a promised runtime; inventory size, hero, and skill pool can change it.
+- Kept advanced gear-only and current-gear-skills-only actions as explicit recovery tools; the combined action remains the primary optimizer.
+
 ## 1.1.4
 
 - Removed all mod diagnostic logging and debug symbols from the distributed Release DLL. Fresh BepInEx installations also start with console and disk logging disabled.

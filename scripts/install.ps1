@@ -8,7 +8,7 @@ $PluginSource = Join-Path $ProjectDirectory 'payload\PathOfIdleInGameSearch.dll'
 $BepInExConfigSource = Join-Path $ProjectDirectory 'payload\BepInEx.cfg'
 $BepInExUrl = 'https://builds.bepinex.dev/projects/bepinex_be/760/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.760%2Ba1afbfb.zip'
 $BepInExSha256 = '9753B825578A3C3A31CC10067CD45A44A7BF56D3C34C4679E24D6ADFD0FBA8EA'
-$PluginSha256 = '53484793D4603A89D7F79B711D98231206AE6959E728D5224AC4ACBFA6FA7EE3'
+$PluginSha256 = '376DC09CE21EAC845B6E831644CCDAEEFAF5FA14E97D51FC0B08416F3F7381B9'
 . (Join-Path $PSScriptRoot 'find-game.ps1')
 $GameDirectory = Find-PathOfIdleGameDirectory
 $GameExecutable = Join-Path $GameDirectory 'PathOfIdle.exe'
@@ -86,5 +86,5 @@ if ((Get-FileHash -LiteralPath $PluginDestination -Algorithm SHA256).Hash -ne $P
 }
 
 Write-Host "게임 위치: $GameDirectory"
-Write-Host 'Path of Idle In-Game Search 1.1.4 설치 완료.'
+Write-Host 'Path of Idle In-Game Search 1.1.5 설치 완료.'
 Write-Host '처음 실행은 BepInEx 준비 때문에 평소보다 오래 걸릴 수 있습니다.'

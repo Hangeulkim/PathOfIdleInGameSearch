@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.3
+
+- Corrected Set activation thresholds to use the game's real 2-piece and 4-piece requirements, including the full 4/4 effect, and improved theme-aware Set scoring so Fire, Ice, and Lightning builds no longer reward conflicting active Sets.
+- Fixed Auto Skills allocation to check saved invested points instead of equipment-modified effective levels, ensuring transformed guide skills receive their required first point.
+- Added all runtime `bodyAttr` values from normal, Legendary, Mythic, Unique, and rune affixes to equipment candidate scoring before loadout pruning, plus bounded behavior scoring for skill variants, abilities, and runeword talents.
+- Removed circular scoring bias from effects already granted by equipped items or active Sets so they no longer reward themselves merely for being active in the current loadout.
+
 ## 1.1.2
 
 - Fixed Auto Skills rejecting a successful talent reset because the mandatory level-1 base-skill point was incorrectly counted as a resettable point.

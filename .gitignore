@@ -3,5 +3,5 @@ source/obj/
 .dotnet-home/
 *.log
 *.png
+!docs/images/*.png
 PathOfIdleInGameSearch-*.zip
-

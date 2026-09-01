@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2
+
+- Fixed Auto Skills rejecting a successful talent reset because the mandatory level-1 base-skill point was incorrectly counted as a resettable point.
+- Switched reset validation to the game's native resettable-point counter, with a version-tolerant save-data fallback.
+
 ## 1.1.1
 
 - Made Auto Gear an exact eight-slot transaction across equipped gear, Inventory, Warehouse, and unlocked Vault storage, with per-slot verification and rollback on failure.

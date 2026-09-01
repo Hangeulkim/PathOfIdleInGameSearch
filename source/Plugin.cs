@@ -22,7 +22,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "local.pathofidle.ingame-search";
     public const string PluginName = "Path of Idle In-Game Search";
-    public const string PluginVersion = "1.1.1";
+    public const string PluginVersion = "1.1.2";
 
     internal static ManualLogSource Logger { get; private set; } = null!;
     internal static ConfigEntry<string> SavedQuery { get; private set; } = null!;
@@ -2261,7 +2261,10 @@ internal static class GameInventoryReader
             var resetPrice = Convert.ToInt32(InvokeRequiredInstance(talentData, "GetResetTalentPrice") ?? throw new InvalidOperationException("Talent reset price is unavailable."), CultureInfo.InvariantCulture);
             var bloodType = CreateEnum("EResType", 2) ?? throw new InvalidOperationException("Blood resource type is unavailable.");
             var bloodBefore = Convert.ToInt32(InvokeInstance(townData, "GetRes", bloodType) ?? 0, CultureInfo.InvariantCulture);
-            var spentBefore = talents.Sum(GetSpentTalentPoints);
+            // The native counter deliberately excludes the mandatory level-1
+            // base-skill point. ResetTalentPoint keeps that point, so summing
+            // TalentData levels makes a successful reset look like it failed.
+            var spentBefore = GetResettableTalentPointCount(talentData, talents);
             if (spentBefore > 0 && bloodBefore < resetPrice)
             {
                 message = UiText.L($"초기화 재화 부족 · 필요 피 {resetPrice:N0} / 보유 {bloodBefore:N0}", $"Not enough Blood to reset · need {resetPrice:N0} / have {bloodBefore:N0}", $"重置资源不足 · 需要鲜血 {resetPrice:N0} / 持有 {bloodBefore:N0}", $"重設資源不足 · 需要鮮血 {resetPrice:N0} / 持有 {bloodBefore:N0}");
@@ -2290,7 +2293,7 @@ internal static class GameInventoryReader
             talents = ReadValues(Read(talentData, "talentDic"))
                 .DistinctBy(value => NativeObjectKey(value, value)).ToList();
             gridById = BuildTalentGridById(talents);
-            var spentAfter = talents.Sum(GetSpentTalentPoints);
+            var spentAfter = GetResettableTalentPointCount(talentData, talents);
             if (spentBefore > 0 && spentAfter != 0)
             {
                 message = UiText.L("특성 초기화가 적용되지 않았습니다. 현재 게임 상태에서 초기화할 수 없습니다.", "Talent reset was not applied in the current game state.", "当前游戏状态下无法重置天赋。", "目前遊戲狀態下無法重設天賦。");
@@ -2734,6 +2737,32 @@ internal static class GameInventoryReader
     {
         var baseLevel = ReadNullableInt(talent, "baseLevel") ?? 0;
         return Math.Max(0, GetTalentLevel(talent) - baseLevel);
+    }
+
+    private static int GetResettableTalentPointCount(object talentData, IReadOnlyCollection<object> talents)
+    {
+        try
+        {
+            var native = InvokeRequiredInstance(talentData, "GetAddTalentPointExcludeStick");
+            var count = Convert.ToInt32(native ?? throw new InvalidOperationException("Native talent-point count was null."), CultureInfo.InvariantCulture);
+            if (count >= 0) return count;
+            throw new InvalidOperationException($"Native talent-point count was negative ({count}).");
+        }
+        catch (Exception error)
+        {
+            // Match the native loop as a version-tolerant fallback: it sums the
+            // saved levels, except that the job's mandatory base skill
+            // (type=1, miniType=1) contributes level-1.
+            Plugin.Logger.LogWarning($"Native resettable talent-point count unavailable; using save-data fallback: {error.GetBaseException().Message}");
+            return talents.Sum(talent =>
+            {
+                var level = Math.Max(0, ReadNullableInt(Read(talent, "saveTalentData"), "level") ?? 0);
+                var definition = Read(talent, "tTalentData");
+                var mandatoryBaseSkill = (ReadNullableInt(definition, "type") ?? 0) == 1
+                                         && (ReadNullableInt(definition, "miniType") ?? 0) == 1;
+                return mandatoryBaseSkill ? Math.Max(0, level - 1) : level;
+            });
+        }
     }
 
     private static bool CanAddTalentPoint(object talent)

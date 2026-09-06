@@ -1,0 +1,195 @@
+{
+    "schemaVersion":  "PathOfIdleInGameSearch.auto-build-regressions.v2",
+    "fixture":  "2026-09-06 game 1.0.12; owned cross-job Alien skills; normal saved grid, not equipment grants",
+    "cases":  [
+                  {
+                      "name":  "healer-alien-auto",
+                      "hero":  38278,
+                      "theme":  "auto",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  false,
+                      "requiredActiveSkillIds":  [
+                                                     2104,
+                                                     2403
+                                                 ],
+                      "requiredSavedTalentIds":  [
+                                                     101204,
+                                                     401203
+                                                 ],
+                      "expected":  {
+                                       "focus":  "Ice / Freeze",
+                                       "gearDefinitionIds":  [
+                                                                 13506,
+                                                                 16603,
+                                                                 20506,
+                                                                 30401,
+                                                                 43604,
+                                                                 53604,
+                                                                 63604,
+                                                                 73403
+                                                             ],
+                                       "baseSkillId":  1602,
+                                       "activeSkillIds":  [
+                                                              2104,
+                                                              2403,
+                                                              2601,
+                                                              2602,
+                                                              2603,
+                                                              2605,
+                                                              2610,
+                                                              2611
+                                                          ],
+                                       "activeSkillSetEffects":  "603:4p[6031,6032]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "101204:7",
+                                                                 "401203:7",
+                                                                 "601102:7",
+                                                                 "601201:7",
+                                                                 "601202:7",
+                                                                 "601203:7",
+                                                                 "601205:7",
+                                                                 "601210:7",
+                                                                 "601211:7",
+                                                                 "602001:6",
+                                                                 "602002:6",
+                                                                 "602003:6",
+                                                                 "602004:6",
+                                                                 "602005:6",
+                                                                 "602006:6",
+                                                                 "602008:6",
+                                                                 "602012:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "healer-alien-support",
+                      "hero":  38278,
+                      "theme":  "support",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  false,
+                      "requiredActiveSkillIds":  [
+                                                     2104,
+                                                     2403
+                                                 ],
+                      "requiredSavedTalentIds":  [
+                                                     101204,
+                                                     401203
+                                                 ],
+                      "expected":  {
+                                       "focus":  "Support / Aura",
+                                       "gearDefinitionIds":  [
+                                                                 13503,
+                                                                 16603,
+                                                                 20506,
+                                                                 30401,
+                                                                 43404,
+                                                                 53604,
+                                                                 63401,
+                                                                 73401
+                                                             ],
+                                       "baseSkillId":  1602,
+                                       "activeSkillIds":  [
+                                                              2104,
+                                                              2403,
+                                                              2603,
+                                                              2604,
+                                                              2607,
+                                                              2610,
+                                                              2611,
+                                                              2612
+                                                          ],
+                                       "activeSkillSetEffects":  "603:2p[6031]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "101204:7",
+                                                                 "401203:7",
+                                                                 "601102:7",
+                                                                 "601203:7",
+                                                                 "601204:7",
+                                                                 "601207:7",
+                                                                 "601210:7",
+                                                                 "601211:7",
+                                                                 "601212:7",
+                                                                 "602002:6",
+                                                                 "602003:6",
+                                                                 "602007:6",
+                                                                 "602008:6",
+                                                                 "602009:6",
+                                                                 "602010:6",
+                                                                 "602011:6",
+                                                                 "602012:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "healer-alien-forged",
+                      "hero":  38278,
+                      "theme":  "auto",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "requiredActiveSkillIds":  [
+                                                     2104,
+                                                     2403
+                                                 ],
+                      "requiredSavedTalentIds":  [
+                                                     101204,
+                                                     401203
+                                                 ],
+                      "expected":  {
+                                       "focus":  "Ice / Freeze",
+                                       "gearDefinitionIds":  [
+                                                                 16503,
+                                                                 13604,
+                                                                 20611,
+                                                                 30503,
+                                                                 43404,
+                                                                 53604,
+                                                                 63604,
+                                                                 73403
+                                                             ],
+                                       "baseSkillId":  1602,
+                                       "activeSkillIds":  [
+                                                              2104,
+                                                              2403,
+                                                              2601,
+                                                              2602,
+                                                              2603,
+                                                              2605,
+                                                              2610,
+                                                              2611
+                                                          ],
+                                       "activeSkillSetEffects":  "602:2p[6021],603:2p[6031]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "101204:7",
+                                                                 "401203:7",
+                                                                 "601102:7",
+                                                                 "601201:7",
+                                                                 "601202:7",
+                                                                 "601203:7",
+                                                                 "601205:7",
+                                                                 "601210:7",
+                                                                 "601211:7",
+                                                                 "602001:6",
+                                                                 "602002:6",
+                                                                 "602003:6",
+                                                                 "602004:6",
+                                                                 "602005:6",
+                                                                 "602006:6",
+                                                                 "602008:6",
+                                                                 "602012:6"
+                                                             ]
+                                   }
+                  }
+              ]
+}

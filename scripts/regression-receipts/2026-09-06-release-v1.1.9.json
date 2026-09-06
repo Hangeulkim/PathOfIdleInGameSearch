@@ -1,0 +1,37 @@
+{
+    "version":  "1.1.9",
+    "repository":  "Hangeulkim/PathOfIdleInGameSearch",
+    "verifiedUtc":  "2026-09-06T14:23:42.2671343Z",
+    "productionSourceComparison":  {
+                                       "files":  13,
+                                       "onlyChange":  "PluginVersion 1.1.8 -\u003e 1.1.9",
+                                       "matchesTestedHealerFix":  true
+                                   },
+    "extractedSourceRebuildSha256":  "6B6D1211060B612A0A97CA7893DAC0E2B4C73384613B0110D55B7DC86D46F43C",
+    "installedSha256":  "6B6D1211060B612A0A97CA7893DAC0E2B4C73384613B0110D55B7DC86D46F43C",
+    "packageSha256":  "61EDC74A06D607667DEF85B3745EE5EE95F481DC0C75830B9FA17CAA2A6F331C",
+    "installerChecks":  [
+                            "existing BepInEx",
+                            "settings preserved",
+                            "tampered payload rejected",
+                            "partial BepInEx rejected",
+                            "running game rejected"
+                        ],
+    "realGameLoad":  {
+                         "version":  "1.1.9",
+                         "responding":  true,
+                         "startupComplete":  true
+                     },
+    "effectAudit":  {
+                        "setEffects":  36,
+                        "specialAffixes":  140,
+                        "failures":  0
+                    },
+    "functionalEvidence":  "2026-09-06-healer-equip.json: prior real apply, rollback, 17 live invariants and 6 repeated previews; not rerun here",
+    "unverified":  [
+                       "fresh BepInEx download branch not rerun",
+                       "new interactive UI walkthrough not repeated; production UI source unchanged"
+                   ],
+    "publicDownloadVerified":  false,
+    "documentationOnlyRepackVerified":  true
+}

@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param()
+param([string]$GameDirectory)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -8,9 +8,12 @@ $PluginSource = Join-Path $ProjectDirectory 'payload\PathOfIdleInGameSearch.dll'
 $BepInExConfigSource = Join-Path $ProjectDirectory 'payload\BepInEx.cfg'
 $BepInExUrl = 'https://builds.bepinex.dev/projects/bepinex_be/760/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.760%2Ba1afbfb.zip'
 $BepInExSha256 = '9753B825578A3C3A31CC10067CD45A44A7BF56D3C34C4679E24D6ADFD0FBA8EA'
-$PluginSha256 = '376DC09CE21EAC845B6E831644CCDAEEFAF5FA14E97D51FC0B08416F3F7381B9'
+$PluginSha256 = '6B6D1211060B612A0A97CA7893DAC0E2B4C73384613B0110D55B7DC86D46F43C'
 . (Join-Path $PSScriptRoot 'find-game.ps1')
-$GameDirectory = Find-PathOfIdleGameDirectory
+. (Join-Path $PSScriptRoot 'sha256.ps1')
+if (-not $GameDirectory) { $GameDirectory = Find-PathOfIdleGameDirectory }
+if (-not (Test-PathOfIdleDirectory $GameDirectory)) { throw 'Invalid Path of Idle game directory.' }
+$GameDirectory = [IO.Path]::GetFullPath($GameDirectory)
 $GameExecutable = Join-Path $GameDirectory 'PathOfIdle.exe'
 $PluginDestination = Join-Path $GameDirectory 'BepInEx\plugins\PathOfIdleInGameSearch.dll'
 $BepInExCore = Join-Path $GameDirectory 'BepInEx\core\BepInEx.Unity.IL2CPP.dll'
@@ -19,7 +22,7 @@ $DoorstopLoader = Join-Path $GameDirectory 'winhttp.dll'
 if (-not (Test-Path -LiteralPath $PluginSource -PathType Leaf)) {
     throw '배포 파일에 모드 DLL이 없습니다. ZIP을 완전히 푼 뒤 다시 실행하세요.'
 }
-if ((Get-FileHash -LiteralPath $PluginSource -Algorithm SHA256).Hash -ne $PluginSha256) {
+if ((Get-ModSha256 $PluginSource) -ne $PluginSha256) {
     throw '모드 DLL 무결성 검사에 실패했습니다. 릴리스 ZIP을 다시 받아 주세요.'
 }
 if (Get-Process -Name PathOfIdle -ErrorAction SilentlyContinue) {
@@ -48,7 +51,7 @@ if (-not $HasCore) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Write-Host 'BepInEx 공식 고정 버전을 받는 중...'
         Invoke-WebRequest -UseBasicParsing -Uri $BepInExUrl -OutFile $ArchivePath
-        if ((Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash -ne $BepInExSha256) {
+        if ((Get-ModSha256 $ArchivePath) -ne $BepInExSha256) {
             throw 'BepInEx 다운로드 무결성 검사에 실패했습니다.'
         }
         Expand-Archive -LiteralPath $ArchivePath -DestinationPath $ExtractDirectory -Force
@@ -81,10 +84,10 @@ if (-not (Test-Path -LiteralPath $ConfigDestination -PathType Leaf)) {
 
 New-Item -ItemType Directory -Path (Split-Path -Parent $PluginDestination) -Force | Out-Null
 Copy-Item -LiteralPath $PluginSource -Destination $PluginDestination -Force
-if ((Get-FileHash -LiteralPath $PluginDestination -Algorithm SHA256).Hash -ne $PluginSha256) {
+if ((Get-ModSha256 $PluginDestination) -ne $PluginSha256) {
     throw '설치된 모드 DLL 검증에 실패했습니다.'
 }
 
 Write-Host "게임 위치: $GameDirectory"
-Write-Host 'Path of Idle In-Game Search 1.1.5 설치 완료.'
+Write-Host 'Path of Idle In-Game Search 1.1.9 설치 완료.'
 Write-Host '처음 실행은 BepInEx 준비 때문에 평소보다 오래 걸릴 수 있습니다.'

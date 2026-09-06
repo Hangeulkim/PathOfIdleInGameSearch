@@ -2,115 +2,236 @@
 
 **English** · [한국어](README.ko.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)
 
-An unofficial Windows mod for searching and managing Inventory, Warehouse, and Vault items without leaving Path of Idle. It provides search, detailed tooltips, game-native item transfers, filtered bulk opening, and 0.1×–100× speed controls in a single opaque overlay.
+An unofficial Windows mod for item search, equipment and skill optimization, box opening, storage management and upgrades directly inside Path of Idle. No browser dashboard or separate server is needed.
 
-## Features
+**[Download the latest release](https://github.com/Hangeulkim/PathOfIdleInGameSearch/releases/latest)** · [Detailed guide and examples](GUIDE.md) · [Changelog](CHANGELOG.md)
 
-- Open or close the overlay with `F3` or `Ctrl+F`.
-- Search by name, quality, slot, level, affix, Set, and storage location.
-- Use spaces for `AND`, `|` for OR, `-word` to exclude, and `"quoted text"` for phrases.
-- Show only matching items and highlight matching text.
-- Edit the search caret with Left, Right, Home, End, Backspace, and Delete.
-- Browse Inventory and Warehouse/Vault results separately.
-- Multi-select Rare, Legendary, Mythic, Set, Unique, and Other quality filters; click a selected quality again to remove it.
-- Restrict searches to affixes and Set bonuses.
-- Hover over an item to view its full description, complete Legendary/Mythic/Unique affixes, Set class restriction, Set pieces, and staged Set bonuses.
-- Move items between Inventory and storage from the result list.
-- Use the game's own storage-routing function so unlocked quality rules determine whether gear enters the Warehouse or Vault.
-- Bulk-open equipment boxes and rune boxes with multi-select quality filters and an optional `or higher` mode.
-- Optionally skip the second confirmation click, stop when inventory space runs out, and automatically store newly opened gear.
-- Keep Search, Bulk Open, and Auto Build on separate pages with opaque detail panels.
-- Use the primary Auto Build action to jointly evaluate all eight equipment slots, base/active skill combinations, and the complete mastery/point-level vector under one bounded native 60-second preview.
-- Apply and verify the exact chosen joint plan under the same plan token. All eight item identities, learned and equipment-granted skills, variants, saved/effective/capped levels, and spent/remaining point totals must match; incomplete application is never reported as success.
-- Keep the combined application atomic. If any gear move, transformation, reset, allocation, or final verification fails, the mod restores the original gear, talents, Blood spent by that run, talent progress counters, and saved skill preferences; if a full bag has no reversible bridge slot, it stops safely before committing.
-- Follow the game's native Warehouse/Vault rules during equipping and normalize committed items into their correct unlocked Vault groups.
-- Enforce job weapon rules and the selected or recommended base skill's weapon requirement/preference. Other active-skill matches contribute to synergy scoring instead of becoming false hard constraints.
-- Score native attributes, rune affixes, active Set breakpoints, skill variants, and skill synergy as an estimated 60-second sustained-output proxy. Unsupported runtime-dependent conditions fail closed instead of receiving a guessed score; this remains a bounded preview, not exact enemy/AI combat DPS.
-- Count skills granted by equipment in build performance without consuming a Shrine learned-skill slot or talent points.
-- Choose Auto, Physical, Elemental, Fire, Ice, Lightning, Minion, Bleed, Corrosion, Critical, Support, or Defense themes. Auto derives elemental focus from native skill damage types instead of localized name or description keywords.
-- Optionally use the Shrine's normal paid transformation, for a configurable number of attempts, to seek the performance-selected skills. The optimizer reserves the reset cost, preserves fixed and alien rows, and stops without claiming success when transformation, reset, or allocation verification is incomplete.
-- Keep advanced `Gear only` and `Skills for current gear only` actions as recovery tools when only one side should be reapplied. They do not replace the primary joint optimization.
-- Select preset speeds or enter any value from `0.1×` to `100×`.
-- Block game keyboard controls while the overlay is focused and block character-switching wheel input only while the pointer is over the focused overlay. Input outside the panel remains available.
-- Preserve window position, query, filters, speed, language, and bulk-opening preferences.
-- Follow the game's language automatically or manually select Korean, English, Simplified Chinese, or Traditional Chinese.
+This is the standalone **Hangeulkim/PathOfIdleInGameSearch** project. **1.1.9** includes the Healer/cross-job-skill auto-equip fix. Earlier links to `path-of-idle-stats` were a publishing mistake; use this repository for source and downloads.
 
-Item names and descriptions use the localization currently supplied by the game. English item names are also indexed as search aliases.
+## Install or update
 
-## Screenshots
+1. Download `PathOfIdleInGameSearch-v1.1.9.zip` from Releases and extract it completely.
+2. Close Path of Idle, then run `install.bat`.
+3. Start the game and press **F3** or **Ctrl+F**.
 
-### Search, quality filters, and bulk opening
+The installer finds the Steam game directory, verifies the mod DLL, and preserves existing mod settings. If BepInEx is missing, it downloads and verifies a pinned official BepInEx 6 IL2CPP x64 build. BepInEx and game binaries are not bundled. Existing BepInEx users can instead copy the separate release DLL into `BepInEx/plugins` while the game is closed.
 
-![Search, quality filters, and bulk opening](docs/images/search-and-bulk-open.png)
+Back up your save before automation, particularly after game updates. Resetting skills, transformations and upgrades use normal game resources. **Sales and failed Mythic refinements are irreversible.**
 
-### Full Set item details and bonuses
+## Main features
 
-![Full Set item details and bonuses](docs/images/set-tooltip.png)
+- **Search:** Find Inventory, Warehouse and Vault items by name, quality, slot, level, affix or set. Inspect full descriptions and move items using the game's storage rules.
+- **Auto Build:** Compare all eight equipment slots and skill/point allocation together, then equip and verify the result. Optional skill transformation uses normal in-game currency. Owned Alien skills remain learned skills; equipment-granted skills do not consume learned slots or points.
+- **Themes:** Auto, Physical, Elemental, Fire, Ice, Lightning, Minion, Bleed, Corrosion, Critical, Support and Defense. Priority ranges from 0 (general performance) to 100 (selected concept), without forcing named items or sets.
+- **Box opening:** Open filtered equipment/rune boxes in batches. “Keep Vault gear, sell rest” keeps rewards accepted by Vault and immediately sells verified overflow. If a better reward replaces an older Vault item, the displaced item is the sale target.
+- **Warehouse cleanup:** A separate confirmed action sells ordinary Warehouse gear, excluding Vault, Inventory and equipped items.
+- **Forge and Mythic:** Compare the next Forge upgrade, max equipped gear, or check eligible unequipped Legendary items for batch Mythic refinement. Mythic checks do not need a selected hero, recheck capacity/resources, and report successes, failures and skips.
+- **Interface:** Drag/resize the panel, choose one of four languages, enter 0.1×–100× speed, and show detailed messages only when needed. Background startup and system-wide activation shortcuts are optional and off by default.
 
-### Opaque in-game overlay
+## Examples
 
-![Opaque in-game overlay](docs/images/opaque-overlay.png)
+- Search `critical damage -health` to require both “critical” and “damage” but exclude “health”. Use `|` for alternatives and quotes for a phrase.
+- For Fire, choose **Fire**, increase **Theme priority**, include Warehouse/Vault items and start Auto Build. Sets are compared by their effects, not their names.
+- For summons, choose **Minion**. The comparison follows ownership, tags, attack type and inherited stats for Ally, Sentry and Totem skills; these labels are not automatically interchangeable.
+- For Shield/survival, choose **Defense**. It compares mitigation, avoidance, shields, recovery, resource costs and time alive under the same incoming attacks.
+- Enable **Ignore forge bonuses** to compare gear at its pre-Forge core values. Real upgrades are unchanged; affixes, existing runes and set effects still count.
 
-## Installation and Updates
+## What does “automatic” mean?
 
-1. Download the latest `PathOfIdleInGameSearch-*.zip` from [Releases](../../releases).
-2. Extract the ZIP completely.
-3. Close Path of Idle.
-4. Double-click `install.bat`.
-5. Start the game and press `F3`.
+The mod runs these operations inside the game after you start and confirm them.
+You do not have to drag each chosen item onto the hero or spend each skill point
+yourself. It is not a cloud AI agent watching the screen: the build calculations
+run locally, read the game's item/skill data, and call its normal equipment,
+storage and skill functions. No AI subscription or API key is needed.
 
-The installer finds the Steam installation automatically. If BepInEx is missing, it downloads the pinned official `6.0.0-be.760` IL2CPP x64 build and verifies its SHA-256 hash before installation. Existing BepInEx installations are reused, and only this mod DLL is installed or updated.
+Auto Build is one run for the selected hero, not a command to manage every hero
+or keep changing builds forever. Search, box opening, Warehouse sale and upgrades
+are separate actions; using Search alone does not start Auto Build. A separate,
+off-by-default startup option can press Continue and enable the game's own Auto
+for eligible active parties. That is not the build optimizer.
 
-The distributed Release DLL contains no mod diagnostic logging or debug symbols. A fresh BepInEx installation also starts with console and disk logging disabled; an existing BepInEx installation keeps its own logging preference.
+## Auto Build: from your click to the equipped result
 
-Reinstalling over an older version does not overwrite `BepInEx/config/local.pathofidle.ingame-search.cfg`, so user settings are preserved.
+### 1. Choose what you want
 
-## Controls
+Select the hero in the game, open **AUTO BUILD**, and check the displayed hero.
+Choose a theme and priority, choose whether to include Warehouse/Vault gear,
+and enter a search time. Inventory and the hero's current gear remain sources;
+turning storage inclusion off prevents searching Warehouse/Vault candidates.
 
-| Action | Control |
-| --- | --- |
-| Open or close the overlay | `F3` or `Ctrl+F` |
-| Close the overlay | `Esc` or the top-right `×` button |
-| Change the UI language | The `AUTO·…`/language button in the title bar |
-| Step the game speed | `−` and `+` |
-| Enter a custom speed | Click the speed field, enter `0.1`–`100`, then press Enter or `Apply` |
-| Restore normal speed | `1×` |
-| View full item details | Hover over a result row |
-| Change result page | Footer buttons or the mouse wheel over the result area |
-| Choose and run an auto build | Open `AUTO BUILD`, select a theme, then run the primary combined Auto Build action |
+Check **Ignore forge bonuses** and the paid skill-transformation option before
+starting. Transformation is enabled by default, with up to 12 attempts in the
+default configuration; turn it off if you do not want those paid rolls. The mod
+does not unlock unavailable skills or make the Shrine's random result certain.
+Skill reset/allocation can still be needed even when transformation is off.
 
-The `WAREHOUSE` tab includes all normal Warehouse pages and unlocked Vault quality groups. When depositing equipment, the mod calls the game's native `QuickMoveItemFromBagToStore` routine instead of guessing the destination from quality names.
+Click **Auto-build Gear + Skills**, then click its **Confirm** button within
+five seconds. The first click only arms the action; it does not calculate a
+final recommendation. The second click starts a run that may actually equip,
+reset and allocate. There is no separate approval screen after the winner is
+calculated, so make your settings and save backup first.
 
-Search and bulk-open quality filters support multiple selections. Clicking an active quality removes it; clearing every selection returns to `All`. With `Or higher` enabled, bulk opening starts at the lowest selected ranked quality and includes every higher ranked quality. `Other` remains a separate, unranked selection.
+### 2. Read what the hero can actually use
 
-Bulk opening requires two clicks by default. Enabling `Skip confirm` makes it run immediately, so check the selected quality, available space, and `Auto storage` setting first. Items are opened one at a time across frames and each native consumption is verified. If the game does not consume an item, the session stops without retrying to prevent duplicate partial rewards. The filter applies to the boxes you own; it does not alter the random quality of generated rewards.
+The mod reads the hero's job/weapon restrictions, unlocked skill rows, available
+points, owned cross-job skills and Mythic equipment limit. It reads actual
+owned item instances, including their affixes, current Forge levels, socketed
+runes and rune words. It does not invent hypothetical perfect items or take
+another hero's equipped loadout as an owned spare item.
 
-Auto Build operates on the hero currently selected in the game. Its primary action jointly searches both weapon slots plus the other six equipment slots, the base/active skill combination, and the full saved mastery/point-level vector. Currently equipped items remain candidates. Job and skill weapon rules, unlocked Shrine rows, fixed and alien skills, the milestone-adjusted point budget, native Mythic limits, and storage routing remain constraints. Skills granted by equipment are included in the performance preview at their granted level but consume neither a Shrine learned-skill slot nor talent points.
+The current loadout stays in the comparison, including empty slots. A
+currently equipped item is not assumed to be best, but it is not discarded
+merely because a newer item has a higher level or rarity.
 
-Each joint candidate is evaluated with a bounded native preview of roughly 60 seconds using native attributes, runtime affixes, runes, granted skills, skill variants, active 2-piece/4-piece Set effects, damage types, cooldowns, and skill speed. Auto focus reads native skill damage types rather than guessing from localized words. A runtime-dependent trigger or condition that cannot be represented safely causes that preview path to fail closed instead of receiving an invented value. The score assumes sufficient resources and uptime and is not exact enemy/AI combat DPS: it does not reproduce every defense, movement decision, target pattern, complex trigger schedule, projectile interaction, DoT stack, summon behavior, or combat-AI choice.
+### 3. Narrow the candidates, then compare complete builds
 
-One observed test run completing in about 20 seconds is only a machine- and save-specific measurement, not a promised optimization time. Larger inventories or different heroes and skill pools may take longer.
+Trying every possible item/skill combination would take too long. The first
+pass removes incompatible items and uses level, attributes, affixes and effect
+structure to select promising alternatives. It also retains representatives of
+different sets and special effects so an unusual combination can be considered.
+That quick screening is not the final damage calculation.
 
-The selected result receives one plan token. That same token and its exact saved-level vector are used when the mod applies the eight-slot loadout, performs any configured normal Blood-paid Shrine transformations and reset, allocates points, and verifies the result. The exact verifier checks all eight item identities, learned skills, equipment-granted skills re-derived from the final loadout, variants, saved/effective/capped levels, and spent/remaining point totals; unsupported or incomplete work stops without claiming success. The whole joint application is atomic: a failure after gear is moved restores the original equipment and talent rows, refunds Blood spent by that run, restores talent progress counters and saved base-skill/skill preferences, and verifies that restoration before reporting the failure. The action requires a second confirmation click.
+The remaining work compares eight-slot loadouts with a skill/point plan. Skills
+are classified using the game's tags and actual effects: what they target,
+whether they attack/heal/shield/summon, their damage type, and which attributes
+they use. A buff can be useful without directly dealing damage. A trap-only
+effect is not credited as an active trap benefit when no matching trap exists;
+the same item may still offer other useful ordinary stats.
 
-Advanced `Gear only` and `Skills for current gear only` actions are available as recovery tools when one side must be reapplied. Because they intentionally hold the other side fixed, their result is not equivalent to the primary joint optimum.
+Two-piece and four-piece bonuses are evaluated at their real thresholds. Four
+pieces are not automatically better: the extra bonus has to outweigh what is
+lost by replacing the other two items. Skill-granted and equipment-granted
+effects are included without spending learned-skill points on the latter.
 
-Very high speeds such as `100×` may skip short animations or timers. Return to `1×` after completing the desired action.
+### 4. Apply the selected plan and check it
 
-## Uninstallation
+After a valid result is selected, the mod moves the exact items using the
+game's own functions, performs allowed paid skill changes, allocates the
+planned points and checks the actual result. It checks all eight item
+identities, skills and levels, equipment-granted effects, and remaining legal
+points. It does not declare success just because some buttons were clicked.
 
-Close the game and run `uninstall.bat`. It removes only this mod DLL while preserving BepInEx, other mods, and the user configuration file.
+If application or verification fails, it attempts to restore the original gear,
+skills, saved preferences and this run's Blood spending, then checks that
+restoration. Other parties' Blood earnings are not part of the refund.
+Extracted Vault items may be preserved in ordinary Warehouse during recovery;
+“restored equipment” does not promise identical storage placement.
 
-## Building from Source
+**Old-gear warning:** successful Auto Build also cleans up displaced/staged
+equipment. It tries to keep it in Vault and may sell eligible gear that is not
+kept there. This is not a keep-every-old-item mode. These committed sales are
+not undone by a later run; a save backup is the protection against unwanted
+sales.
 
-.NET 6 SDK or newer is required. Install BepInEx, run the game once to generate interop assemblies, close the game, and run `scripts\build.ps1`. The build references assemblies from the locally installed game; game files are not included in this repository.
+You can cancel during planning while **Cancel** is enabled. Once item/skill
+application starts, cancellation is disabled so it can finish or restore the
+transaction. Closing the panel is not an undo button. Use **Show log** to see
+why a run stopped, what changed, or whether restoration was incomplete.
 
-## Compatibility
+## What Auto Build calculates
 
-- Windows x64
-- Steam version of Path of Idle
-- Unity IL2CPP with BepInEx 6
+**Search time** is how long the mod may look for candidates: 10 seconds to unlimited, default 60. **Combat time** is the same simulated 30 seconds used to compare retained candidates. Applying and verifying the result can take additional time.
 
-Game updates that change internal data structures may require a mod update.
+The comparison includes supported skill timing, mana/health costs, regeneration, summons, real 2-/4-piece set effects, Unique/Mythic effects, and runes/rune words already on each item. Chance effects use expected activations. Loose runes are not rearranged or socketed automatically.
 
-This is an unofficial fan project and is not affiliated with the developers of Path of Idle or BepInEx. Back up important save data before using unofficial mods.
+For example, a 30% effect with ten eligible trigger opportunities contributes
+three expected activations in the calculation. It is not forced to trigger
+three times in your next real battle. If a trigger depends on enemy behavior
+the model cannot establish, it is not given made-up uptime.
+
+For damage themes, the model estimates how much supported output the build can
+produce over those 30 seconds, accounting for resource and timing limits. For
+Defense, every candidate receives the same modeled incoming attacks; health
+can reach zero, and staying alive, mitigation, shields and usable recovery
+matter. Only healing that can target the caster counts toward the caster's own
+survival. Healing other allies contributes to Support rather than secretly
+making the wearer invulnerable.
+
+The displayed result is a comparison score, not the game's combat-log DPS. It
+can contain theme-specific utility or survival value. “Bounded” in older
+descriptions simply meant that only a limited set of candidates is examined
+within a time limit, not that “bounded build” is a special kind of build.
+
+Theme priority is a preference, not “100% Fire damage” or “100% certainty”. At
+50, general and theme-focused performance are balanced; at 100, the selected
+concept is emphasized. Useful buffs/passives and other support can still be
+selected. Auto derives a focus from the hero's usable skill/effect data instead
+of blindly requiring the current skills.
+
+It is a build comparison estimate, **not exact damage against every enemy and not a guarantee of the best possible build**. New game mechanics can require an update. The mod verifies final gear, skills and points; an incomplete application is reported as a failure and restoration is attempted and checked.
+
+A shorter search may examine fewer alternatives. Unlimited removes the search
+deadline; it does not mean every possible combination or every unknown effect
+is solved. A large stash, many skill variants and slow native game calls can
+still take time. If no complete, safely applicable comparison is available,
+the mod stops rather than treating a rough item-screening score as a verified
+winner. A run that leaves your gear unchanged can therefore mean either that
+the current gear remained preferred or that the run was unable to apply a
+result; read the status to distinguish them.
+
+The two **Advanced** actions deliberately optimize only one side: **apply gear
+only** keeps the skill side fixed, and **skills for current gear** keeps gear
+fixed. Use the main combined action for a joint build. Auto Build does not
+perform real Forge upgrades or Mythic rolls; those are separate Workshop
+actions. It also does not rearrange loose runes.
+
+## Box opening and selling: exactly what is automated
+
+Open **BULK OPEN**, choose equipment or rune boxes and their quality filters,
+and select the equipment reward destination. The quality filter chooses which
+boxes to open, not what random reward quality the game must generate.
+
+- **Inventory:** leave opened equipment in the bag.
+- **Warehouse/Vault:** use the game's native routing rules; selecting storage
+  does not guarantee every item goes to Vault.
+- **Keep Vault gear, sell rest:** open one box, check where its reward actually
+  went, retain Vault-accepted gear and sell the verified overflow immediately.
+  For example, if new item B replaces old Vault item A, B is retained and the
+  exactly identified A is the sale target. The small Market queue is cleared
+  as each sale is verified, before continuing.
+
+The default requires a second confirmation click. **Skip confirm** removes
+that extra click for box opening, so leave it off until the selected filters
+and destination are what you want. Batch work checks each item and can stop
+between items; it does not blindly keep retrying an uncertain result. Sales
+already completed are not reversed by cancellation.
+
+**Sell all Warehouse gear (Vault excluded)** is a different, double-confirmed
+action. It scans ordinary Warehouse fields only, excluding Vault, Inventory
+and equipped gear; unsellable/locked items are skipped. It is not a command to
+empty every storage system.
+
+## Forge and Mythic: separate from choosing a build
+
+- **Find best target + apply one level:** compare the selected hero's equipped
+  items at their current Forge level and predicted next level, then spend the
+  normal cost on one confirmed upgrade.
+- **Max all equipped gear:** repeatedly upgrade the current equipped items
+  toward the native maximum while legal and affordable. It does not replace
+  them with a new loadout, and it stops on resource or verification problems.
+- **Check all Mythic candidates + batch refine:** the first click checks
+  eligible unequipped Legendary items in Inventory, Warehouse and Vault. Locked,
+  socketed or equipped items are not eligible. Confirm the same candidate set
+  within 12 seconds to attempt the batch. No selected hero is required.
+
+Before each Mythic attempt the mod rechecks the game's current success chance,
+cost, item identity, resources and Mythic Vault capacity. It attempts the game's
+normal roll, not a guaranteed upgrade. Success creates the native Mythic result;
+failure destroys the Legendary. Capacity-blocked items are skipped, and a
+resource-wide or uncertain failure stops the remaining batch. The result shows
+attempted, succeeded, failed/destroyed and skipped counts. Newly appearing items
+are not added halfway through a confirmed batch.
+
+The startup/background settings, build choices and bulk-open choices are saved
+locally. Reopening the panel keeps those settings; it does not by itself
+authorize another sale, Mythic batch or Auto Build run.
+
+## Verification, source and removal
+
+The [guide](GUIDE.md#verification-and-limits) and [cross-job regression notes](scripts/HEALER-REGRESSION.md) distinguish current-save checks from historical exact-selection baselines. The 17-case current-save checks and six repeated Healer previews passed; actual Healer equipment application and failure restoration were also tested. These results are not a promise that every unseen save works.
+
+To build, install .NET 6 SDK or newer and BepInEx, launch the game once to generate its interop files, then run `scripts/build.ps1`. Production builds exclude runtime test hooks and debug symbols. See the [release checklist](RELEASING.md).
+
+To uninstall, close the game and run `uninstall.bat`. Settings, BepInEx and other mods are preserved.
+
+Windows x64 / Steam / BepInEx 6 IL2CPP. An unofficial fan project, not affiliated with the game developers or BepInEx. See [third-party runtime details](THIRD-PARTY.md).

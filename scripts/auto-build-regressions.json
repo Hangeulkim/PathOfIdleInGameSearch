@@ -1,0 +1,872 @@
+{
+    "schemaVersion":  "PathOfIdleInGameSearch.auto-build-regressions.v2",
+    "cases":  [
+                  {
+                      "name":  "shield-defense",
+                      "hero":  10947,
+                      "theme":  "defense",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  false,
+                      "expected":  {
+                                       "focus":  "Defense / Survival",
+                                       "gearDefinitionIds":  [
+                                                                 15501,
+                                                                 11601,
+                                                                 20503,
+                                                                 30607,
+                                                                 41603,
+                                                                 51603,
+                                                                 61402,
+                                                                 71401
+                                                             ],
+                                       "baseSkillId":  1401,
+                                       "activeSkillIds":  [
+                                                              2402,
+                                                              2403,
+                                                              2407,
+                                                              2408,
+                                                              2410,
+                                                              2411
+                                                          ],
+                                       "activeSkillSetEffects":  "401:4p[4011,4012]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "302003:1",
+                                                                 "401101:10",
+                                                                 "401202:10",
+                                                                 "401203:10",
+                                                                 "401207:10",
+                                                                 "401208:10",
+                                                                 "401210:3",
+                                                                 "401211:9",
+                                                                 "402001:8",
+                                                                 "402005:8",
+                                                                 "402006:8",
+                                                                 "402008:8",
+                                                                 "402009:8",
+                                                                 "402012:7",
+                                                                 "602010:1"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "fire-theme",
+                      "hero":  21930,
+                      "theme":  "fire",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Fire / Burn",
+                                       "gearDefinitionIds":  [
+                                                                 16503,
+                                                                 15403,
+                                                                 20606,
+                                                                 30503,
+                                                                 43404,
+                                                                 53602,
+                                                                 63602,
+                                                                 73602
+                                                             ],
+                                       "baseSkillId":  1301,
+                                       "activeSkillIds":  [
+                                                              2301,
+                                                              2303,
+                                                              2305,
+                                                              2306,
+                                                              2309,
+                                                              2310
+                                                          ],
+                                       "activeSkillSetEffects":  "303:4p[3031,3032]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102005:3",
+                                                                 "102012:2",
+                                                                 "202011:2",
+                                                                 "301101:10",
+                                                                 "301201:10",
+                                                                 "301203:10",
+                                                                 "301205:4",
+                                                                 "301206:10",
+                                                                 "301209:10",
+                                                                 "301210:6",
+                                                                 "302001:10",
+                                                                 "302002:4",
+                                                                 "302003:10",
+                                                                 "302004:10",
+                                                                 "302011:10"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "ice-theme",
+                      "hero":  6787,
+                      "theme":  "ice",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Ice / Freeze",
+                                       "gearDefinitionIds":  [
+                                                                 15401,
+                                                                 15403,
+                                                                 20506,
+                                                                 30401,
+                                                                 43404,
+                                                                 53502,
+                                                                 63401,
+                                                                 73403
+                                                             ],
+                                       "baseSkillId":  1303,
+                                       "activeSkillIds":  [
+                                                              2302,
+                                                              2303,
+                                                              2305,
+                                                              2307,
+                                                              2310,
+                                                              2312
+                                                          ],
+                                       "activeSkillSetEffects":  "none",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102006:7",
+                                                                 "301103:8",
+                                                                 "301202:8",
+                                                                 "301203:8",
+                                                                 "301205:8",
+                                                                 "301207:8",
+                                                                 "301210:8",
+                                                                 "301212:8",
+                                                                 "302001:7",
+                                                                 "302003:7",
+                                                                 "302010:7",
+                                                                 "302011:7",
+                                                                 "502001:7",
+                                                                 "602004:7",
+                                                                 "602006:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "mercenary-minion",
+                      "hero":  34891,
+                      "theme":  "minion",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Minion / Summon",
+                                       "gearDefinitionIds":  [
+                                                                 14505,
+                                                                 12403,
+                                                                 20609,
+                                                                 30503,
+                                                                 42401,
+                                                                 52401,
+                                                                 62603,
+                                                                 72403
+                                                             ],
+                                       "baseSkillId":  1501,
+                                       "activeSkillIds":  [
+                                                              2503,
+                                                              2504,
+                                                              2506,
+                                                              2508,
+                                                              2510,
+                                                              2512
+                                                          ],
+                                       "activeSkillSetEffects":  "501:2p[5011]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102003:3",
+                                                                 "302005:3",
+                                                                 "501101:10",
+                                                                 "501203:7",
+                                                                 "501204:5",
+                                                                 "501206:5",
+                                                                 "501208:10",
+                                                                 "501210:10",
+                                                                 "501212:10",
+                                                                 "502001:10",
+                                                                 "502002:10",
+                                                                 "502004:4",
+                                                                 "502005:4",
+                                                                 "502006:10",
+                                                                 "502011:10"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "pierce-physical",
+                      "hero":  12047,
+                      "theme":  "physical",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Physical / Martial",
+                                       "gearDefinitionIds":  [
+                                                                 14504,
+                                                                 13601,
+                                                                 20605,
+                                                                 30506,
+                                                                 42401,
+                                                                 52401,
+                                                                 62601,
+                                                                 72601
+                                                             ],
+                                       "baseSkillId":  1201,
+                                       "activeSkillIds":  [
+                                                              2205,
+                                                              2206,
+                                                              2207,
+                                                              2208,
+                                                              2209,
+                                                              2212
+                                                          ],
+                                       "activeSkillSetEffects":  "201:4p[2011,2012]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102003:7",
+                                                                 "201101:8",
+                                                                 "201205:8",
+                                                                 "201206:8",
+                                                                 "201207:8",
+                                                                 "201208:8",
+                                                                 "201209:8",
+                                                                 "201212:8",
+                                                                 "202001:7",
+                                                                 "202002:7",
+                                                                 "202003:7",
+                                                                 "202004:7",
+                                                                 "202008:7",
+                                                                 "202009:7",
+                                                                 "202011:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "lightning-theme",
+                      "hero":  27666,
+                      "theme":  "lightning",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Lightning / Shock",
+                                       "gearDefinitionIds":  [
+                                                                 16503,
+                                                                 16601,
+                                                                 20506,
+                                                                 30401,
+                                                                 43601,
+                                                                 53601,
+                                                                 63401,
+                                                                 73601
+                                                             ],
+                                       "baseSkillId":  1302,
+                                       "activeSkillIds":  [
+                                                              2302,
+                                                              2304,
+                                                              2305,
+                                                              2308,
+                                                              2310,
+                                                              2311
+                                                          ],
+                                       "activeSkillSetEffects":  "301:4p[3011,3012]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "202002:8",
+                                                                 "301102:10",
+                                                                 "301202:2",
+                                                                 "301204:10",
+                                                                 "301205:2",
+                                                                 "301208:10",
+                                                                 "301210:10",
+                                                                 "301211:2",
+                                                                 "302001:9",
+                                                                 "302003:9",
+                                                                 "302005:9",
+                                                                 "302011:8",
+                                                                 "402003:8",
+                                                                 "502004:8",
+                                                                 "602003:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "warrior-defense",
+                      "hero":  12138,
+                      "theme":  "defense",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Defense / Survival",
+                                       "gearDefinitionIds":  [
+                                                                 11502,
+                                                                 12403,
+                                                                 20503,
+                                                                 30404,
+                                                                 41401,
+                                                                 51403,
+                                                                 61402,
+                                                                 71401
+                                                             ],
+                                       "baseSkillId":  1101,
+                                       "activeSkillIds":  [
+                                                              2102,
+                                                              2103,
+                                                              2104,
+                                                              2107,
+                                                              2108,
+                                                              2112
+                                                          ],
+                                       "activeSkillSetEffects":  "none",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "101101:10",
+                                                                 "101202:3",
+                                                                 "101203:10",
+                                                                 "101204:10",
+                                                                 "101207:10",
+                                                                 "101208:10",
+                                                                 "101212:10",
+                                                                 "102001:9",
+                                                                 "102003:9",
+                                                                 "102004:9",
+                                                                 "102005:9",
+                                                                 "102007:2",
+                                                                 "102008:8",
+                                                                 "502004:1",
+                                                                 "602010:1"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "warrior-auto",
+                      "hero":  28130,
+                      "theme":  "auto",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Physical / Martial",
+                                       "gearDefinitionIds":  [
+                                                                 12506,
+                                                                 12403,
+                                                                 20604,
+                                                                 30506,
+                                                                 41602,
+                                                                 51403,
+                                                                 61402,
+                                                                 71401
+                                                             ],
+                                       "baseSkillId":  1101,
+                                       "activeSkillIds":  [
+                                                              2101,
+                                                              2102,
+                                                              2104,
+                                                              2109,
+                                                              2111,
+                                                              2112
+                                                          ],
+                                       "activeSkillSetEffects":  "103:2p[1031]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "101101:8",
+                                                                 "101201:8",
+                                                                 "101202:8",
+                                                                 "101204:8",
+                                                                 "101209:8",
+                                                                 "101211:8",
+                                                                 "101212:8",
+                                                                 "102001:7",
+                                                                 "102002:7",
+                                                                 "102003:7",
+                                                                 "102004:7",
+                                                                 "102011:7",
+                                                                 "102012:7",
+                                                                 "202001:7",
+                                                                 "402001:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "warrior-minion",
+                      "hero":  29648,
+                      "theme":  "minion",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Minion / Summon",
+                                       "gearDefinitionIds":  [
+                                                                 12403,
+                                                                 12506,
+                                                                 20601,
+                                                                 30503,
+                                                                 41601,
+                                                                 51602,
+                                                                 61601,
+                                                                 71401
+                                                             ],
+                                       "baseSkillId":  1101,
+                                       "activeSkillIds":  [
+                                                              2102,
+                                                              2103,
+                                                              2104,
+                                                              2105,
+                                                              2106,
+                                                              2109
+                                                          ],
+                                       "activeSkillSetEffects":  "101:4p[1011,1012]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "101101:10",
+                                                                 "101202:10",
+                                                                 "101203:5",
+                                                                 "101204:4",
+                                                                 "101205:10",
+                                                                 "101206:10",
+                                                                 "101209:10",
+                                                                 "102001:10",
+                                                                 "102003:10",
+                                                                 "102004:10",
+                                                                 "102008:8",
+                                                                 "102011:8",
+                                                                 "202001:2",
+                                                                 "202011:2",
+                                                                 "302001:2"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "hunter-ally-minion",
+                      "hero":  32827,
+                      "theme":  "minion",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Minion / Summon",
+                                       "gearDefinitionIds":  [
+                                                                 13506,
+                                                                 14405,
+                                                                 20603,
+                                                                 30503,
+                                                                 42601,
+                                                                 52601,
+                                                                 62401,
+                                                                 72602
+                                                             ],
+                                       "baseSkillId":  1201,
+                                       "activeSkillIds":  [
+                                                              2202,
+                                                              2203,
+                                                              2204,
+                                                              2205,
+                                                              2210,
+                                                              2211
+                                                          ],
+                                       "activeSkillSetEffects":  "202:4p[2021,2022]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "201101:3",
+                                                                 "201202:10",
+                                                                 "201203:10",
+                                                                 "201204:3",
+                                                                 "201205:3",
+                                                                 "201210:10",
+                                                                 "201211:10",
+                                                                 "202002:9",
+                                                                 "202003:9",
+                                                                 "202004:9",
+                                                                 "202006:9",
+                                                                 "202008:9",
+                                                                 "202009:9",
+                                                                 "202011:7",
+                                                                 "502002:1"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "hunter-bleed",
+                      "hero":  12047,
+                      "theme":  "bleed",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Bleed / Wound",
+                                       "gearDefinitionIds":  [
+                                                                 14505,
+                                                                 13401,
+                                                                 20404,
+                                                                 30507,
+                                                                 42402,
+                                                                 52401,
+                                                                 62402,
+                                                                 72403
+                                                             ],
+                                       "baseSkillId":  1201,
+                                       "activeSkillIds":  [
+                                                              2202,
+                                                              2203,
+                                                              2204,
+                                                              2205,
+                                                              2209,
+                                                              2212
+                                                          ],
+                                       "activeSkillSetEffects":  "none",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102003:8",
+                                                                 "201101:4",
+                                                                 "201202:4",
+                                                                 "201203:10",
+                                                                 "201204:4",
+                                                                 "201205:10",
+                                                                 "201209:10",
+                                                                 "201212:10",
+                                                                 "202001:10",
+                                                                 "202002:10",
+                                                                 "202003:10",
+                                                                 "202004:9",
+                                                                 "202005:2",
+                                                                 "202006:2",
+                                                                 "202011:8"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "hunter-crit",
+                      "hero":  12047,
+                      "theme":  "crit",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Critical Strike",
+                                       "gearDefinitionIds":  [
+                                                                 14505,
+                                                                 13506,
+                                                                 20603,
+                                                                 30401,
+                                                                 42601,
+                                                                 52601,
+                                                                 62402,
+                                                                 72602
+                                                             ],
+                                       "baseSkillId":  1203,
+                                       "activeSkillIds":  [
+                                                              2203,
+                                                              2205,
+                                                              2208,
+                                                              2209,
+                                                              2210,
+                                                              2212
+                                                          ],
+                                       "activeSkillSetEffects":  "202:4p[2021,2022]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "201103:8",
+                                                                 "201203:8",
+                                                                 "201205:8",
+                                                                 "201208:8",
+                                                                 "201209:8",
+                                                                 "201210:8",
+                                                                 "201212:8",
+                                                                 "202001:7",
+                                                                 "202002:7",
+                                                                 "202003:7",
+                                                                 "202004:7",
+                                                                 "202008:7",
+                                                                 "202011:7",
+                                                                 "302010:7",
+                                                                 "602005:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "mercenary-physical",
+                      "hero":  11242,
+                      "theme":  "physical",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Physical / Martial",
+                                       "gearDefinitionIds":  [
+                                                                 14504,
+                                                                 12605,
+                                                                 20609,
+                                                                 30609,
+                                                                 42501,
+                                                                 52401,
+                                                                 62603,
+                                                                 72403
+                                                             ],
+                                       "baseSkillId":  1501,
+                                       "activeSkillIds":  [
+                                                              2501,
+                                                              2502,
+                                                              2506,
+                                                              2508,
+                                                              2509,
+                                                              2512
+                                                          ],
+                                       "activeSkillSetEffects":  "501:4p[5011,5012]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102006:7",
+                                                                 "202005:7",
+                                                                 "302001:7",
+                                                                 "501101:8",
+                                                                 "501201:8",
+                                                                 "501202:8",
+                                                                 "501206:8",
+                                                                 "501208:8",
+                                                                 "501209:8",
+                                                                 "501212:8",
+                                                                 "502001:7",
+                                                                 "502002:7",
+                                                                 "502004:7",
+                                                                 "502005:7",
+                                                                 "502010:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "mercenary-sentry",
+                      "hero":  5739,
+                      "theme":  "minion",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Minion / Summon",
+                                       "gearDefinitionIds":  [
+                                                                 12403,
+                                                                 14602,
+                                                                 20610,
+                                                                 30503,
+                                                                 42501,
+                                                                 52401,
+                                                                 62401,
+                                                                 72403
+                                                             ],
+                                       "baseSkillId":  1501,
+                                       "activeSkillIds":  [
+                                                              2503,
+                                                              2504,
+                                                              2506,
+                                                              2508,
+                                                              2510,
+                                                              2512
+                                                          ],
+                                       "activeSkillSetEffects":  "502:2p[5021]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102003:4",
+                                                                 "501101:10",
+                                                                 "501203:6",
+                                                                 "501204:6",
+                                                                 "501206:9",
+                                                                 "501208:10",
+                                                                 "501210:10",
+                                                                 "501212:10",
+                                                                 "502001:4",
+                                                                 "502002:10",
+                                                                 "502005:4",
+                                                                 "502006:10",
+                                                                 "502011:10",
+                                                                 "602006:4",
+                                                                 "602012:4"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "priest-auto-totem",
+                      "hero":  10894,
+                      "theme":  "auto",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Elemental / Spell",
+                                       "gearDefinitionIds":  [
+                                                                 16503,
+                                                                 13506,
+                                                                 20612,
+                                                                 30401,
+                                                                 43604,
+                                                                 53604,
+                                                                 63604,
+                                                                 73403
+                                                             ],
+                                       "baseSkillId":  1602,
+                                       "activeSkillIds":  [
+                                                              2601,
+                                                              2602,
+                                                              2603,
+                                                              2609,
+                                                              2610,
+                                                              2611
+                                                          ],
+                                       "activeSkillSetEffects":  "603:4p[6031,6032]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "102001:7",
+                                                                 "601102:8",
+                                                                 "601201:8",
+                                                                 "601202:8",
+                                                                 "601203:8",
+                                                                 "601209:8",
+                                                                 "601210:8",
+                                                                 "601211:8",
+                                                                 "602002:7",
+                                                                 "602003:7",
+                                                                 "602004:7",
+                                                                 "602005:7",
+                                                                 "602006:7",
+                                                                 "602008:7",
+                                                                 "602012:6"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "priest-minion-totem",
+                      "hero":  10894,
+                      "theme":  "minion",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Minion / Summon",
+                                       "gearDefinitionIds":  [
+                                                                 13506,
+                                                                 16603,
+                                                                 20506,
+                                                                 30401,
+                                                                 43604,
+                                                                 53604,
+                                                                 63604,
+                                                                 73403
+                                                             ],
+                                       "baseSkillId":  1601,
+                                       "activeSkillIds":  [
+                                                              2603,
+                                                              2604,
+                                                              2607,
+                                                              2608,
+                                                              2610,
+                                                              2611
+                                                          ],
+                                       "activeSkillSetEffects":  "603:4p[6031,6032]",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "302008:6",
+                                                                 "302009:6",
+                                                                 "402003:6",
+                                                                 "502009:5",
+                                                                 "601101:7",
+                                                                 "601203:10",
+                                                                 "601204:7",
+                                                                 "601207:7",
+                                                                 "601208:7",
+                                                                 "601210:10",
+                                                                 "601211:10",
+                                                                 "602001:5",
+                                                                 "602005:10",
+                                                                 "602007:5",
+                                                                 "602008:10"
+                                                             ]
+                                   }
+                  },
+                  {
+                      "name":  "cleric-support",
+                      "hero":  10947,
+                      "theme":  "support",
+                      "seconds":  60,
+                      "priority":  100,
+                      "includeForgeBonuses":  true,
+                      "expected":  {
+                                       "focus":  "Support / Aura",
+                                       "gearDefinitionIds":  [
+                                                                 15401,
+                                                                 15403,
+                                                                 20506,
+                                                                 30401,
+                                                                 41501,
+                                                                 51403,
+                                                                 61402,
+                                                                 71401
+                                                             ],
+                                       "baseSkillId":  1403,
+                                       "activeSkillIds":  [
+                                                              2403,
+                                                              2407,
+                                                              2408,
+                                                              2410,
+                                                              2411,
+                                                              2412
+                                                          ],
+                                       "activeSkillSetEffects":  "none",
+                                       "paidTalentPoints":  110,
+                                       "talentPointBudget":  110,
+                                       "unspentTalentPoints":  0,
+                                       "targetSavedLevels":  [
+                                                                 "401103:8",
+                                                                 "401203:8",
+                                                                 "401207:8",
+                                                                 "401208:8",
+                                                                 "401210:8",
+                                                                 "401211:8",
+                                                                 "401212:8",
+                                                                 "402001:7",
+                                                                 "402005:7",
+                                                                 "402006:7",
+                                                                 "402008:7",
+                                                                 "402009:7",
+                                                                 "402010:7",
+                                                                 "402012:7",
+                                                                 "602010:6"
+                                                             ]
+                                   }
+                  }
+              ]
+}

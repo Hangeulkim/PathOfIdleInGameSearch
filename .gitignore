@@ -1,5 +1,10 @@
 source/bin/
 source/obj/
+**/bin/
+**/obj/
+artifacts/
+runtime-*/
+runtime-*
 .dotnet-home/
 *.log
 *.png

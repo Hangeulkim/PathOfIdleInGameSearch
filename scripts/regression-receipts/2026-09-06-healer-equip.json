@@ -1,0 +1,66 @@
+{
+    "schemaVersion":  "PathOfIdleInGameSearch.healer-equip-regression.v1",
+    "gameVersion":  "1.0.12",
+    "verifiedUtc":  "2026-09-06T07:32:05.8967558Z",
+    "originalFailureReproduced":  true,
+    "nativeApply":  {
+                        "equippedSlots":  8,
+                        "preservesAutoTheme":  true,
+                        "remainingPoints":  0,
+                        "success":  true,
+                        "elapsedMs":  35310
+                    },
+    "injectedRollback":  {
+                             "extractedVaultItemsPreservedInWarehouse":  8,
+                             "recovered":  true,
+                             "exactGearAndSkills":  true,
+                             "verifiedBloodRefund":  true
+                         },
+    "broadReadOnly":  {
+                          "cases":  [
+                                        "cleric-support.result",
+                                        "fire-theme.result",
+                                        "hunter-ally-minion.result",
+                                        "hunter-bleed.result",
+                                        "hunter-crit.result",
+                                        "ice-theme.result",
+                                        "lightning-theme.result",
+                                        "mercenary-minion.result",
+                                        "mercenary-physical.result",
+                                        "mercenary-sentry.result",
+                                        "pierce-physical.result",
+                                        "priest-auto-totem.result",
+                                        "priest-minion-totem.result",
+                                        "shield-defense.result",
+                                        "warrior-auto.result",
+                                        "warrior-defense.result",
+                                        "warrior-minion.result"
+                                    ],
+                          "selectionRestored":  true,
+                          "stateUnchanged":  true,
+                          "runs":  17,
+                          "olderSaveSignatureComparison":  false
+                      },
+    "healerRepeatedReadOnly":  {
+                                   "requiredSavedTalents":  [
+                                                                101204,
+                                                                401203
+                                                            ],
+                                   "requiredForeignSkills":  [
+                                                                 2104,
+                                                                 2403
+                                                             ],
+                                   "cases":  3,
+                                   "repeatsPerCase":  2,
+                                   "identicalSignatures":  true
+                               },
+    "effectScorerAudit":  {
+                              "sets":  36,
+                              "specialAffixes":  140,
+                              "scope":  "structural/native effect mapping, not proof of complete encounter fidelity",
+                              "failures":  0
+                          },
+    "productionSha256":  "d6821bff196067e72ee1ef841378776ef210f538bef839f1a5d45624e0f8badc",
+    "installedSha256":  "d6821bff196067e72ee1ef841378776ef210f538bef839f1a5d45624e0f8badc",
+    "publicReleaseUpdated":  false
+}

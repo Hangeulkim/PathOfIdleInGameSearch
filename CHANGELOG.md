@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.9
+
+- Publishes the latest in-game mod in its standalone repository, `Hangeulkim/PathOfIdleInGameSearch`. Releases 1.1.6–1.1.8 were mistakenly published in a different repository; install 1.1.9 from this project's Releases page.
+- Includes configurable 10-second-to-unlimited search time (default 60), a separate 30-second combat comparison, theme priority, resource-aware Defense and summon comparisons, and comparison-only Ignore forge bonuses.
+- Adds Vault-aware box overflow sales, ordinary Warehouse-only cleanup, maximum equipped Forge upgrades, and character-independent batch Legendary-to-Mythic refinement with capacity checks and attempt counts.
+- Adds resizable panels and optional hidden operation details. Background startup and system-wide activation hotkeys are opt-in and off by default.
+- Fixes Auto Build rolling equipment back for heroes with owned cross-job Alien skills. Their saved talent rows and invested points now remain part of the exact gear-and-skill plan, without treating equipment-granted skills as learned slots.
+- Refunds only Blood spent by the failed application, preserving other parties' income during planning.
+- Adds saved cross-job regression fixtures, six repeated read-only checks, a real eight-slot apply check, and an injected-failure rollback check. The existing 17-case matrix also passed current-save invariants; old-save exact signatures are not claimed for the progressed save.
+- Updates source packaging, checksum verification, installation instructions and examples. No game files, user saves, personal configuration or diagnostic-enabled DLL are distributed.
+
 ## 1.1.5
 
 - Replaced the separate primary gear and skill optimizers with one combined Auto Build plan that jointly evaluates all eight equipment slots, base/active skill combinations, and the complete mastery/point-level vector through a bounded native 60-second preview.

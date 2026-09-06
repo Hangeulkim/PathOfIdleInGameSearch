@@ -28,6 +28,23 @@ Back up your save before automation, particularly after game updates. Resetting 
 - **Forge and Mythic:** Compare the next Forge upgrade, max equipped gear, or check eligible unequipped Legendary items for batch Mythic refinement. Mythic checks do not need a selected hero, recheck capacity/resources, and report successes, failures and skips.
 - **Interface:** Drag/resize the panel, choose one of four languages, enter 0.1×–100× speed, and show detailed messages only when needed. Background startup and system-wide activation shortcuts are optional and off by default.
 
+## Item Search: read the screen
+
+Type a term in **Item Search**, leave **Include warehouse and Vault** enabled
+to search storage too, then choose the Inventory or Warehouse/Vault result tab.
+Quality buttons narrow the list. Searching does not move, sell or equip anything.
+
+![v1.1.9 Item Search with a minion text query and Warehouse/Vault results](docs/images/v1.1.9-search.jpg)
+
+*The search field is at the top; the two wide tabs above the results switch
+locations. This example searches the text `minion`, not the Auto Build theme.
+Each result shows its location and a **Move to inventory** button on the right;
+that button moves that item only. Hover over the item for its full effects.*
+
+These are real v1.1.9 game captures. Hero names, item counts, speed and saved
+settings are examples from this save, not recommended defaults. Click a picture
+to read it at full size.
+
 ## Examples
 
 - Search `critical damage -health` to require both “critical” and “damage” but exclude “health”. Use `|` for alternatives and quotes for a phrase.
@@ -59,6 +76,14 @@ Choose a theme and priority, choose whether to include Warehouse/Vault gear,
 and enter a search time. Inventory and the hero's current gear remain sources;
 turning storage inclusion off prevents searching Warehouse/Vault candidates.
 
+![v1.1.9 Auto Build selected hero, theme and priority controls](docs/images/v1.1.9-auto-build-theme.jpg)
+
+*Check the hero in the blue box, then use the theme buttons below it. Here
+SHIELD has **Defense** selected. **Theme priority** and **Best-candidate search
+time** are separate inputs. The pictured 100% / unlimited are saved example
+settings; **Default 60** restores the normal 60-second search limit. If a newly
+selected hero is not shown yet, use **Refresh** at the upper right.*
+
 Check **Ignore forge bonuses** and the paid skill-transformation option before
 starting. Transformation is enabled by default, with up to 12 attempts in the
 default configuration; turn it off if you do not want those paid rolls. The mod
@@ -70,6 +95,14 @@ five seconds. The first click only arms the action; it does not calculate a
 final recommendation. The second click starts a run that may actually equip,
 reset and allocate. There is no separate approval screen after the winner is
 calculated, so make your settings and save backup first.
+
+![v1.1.9 Auto Build options and combined execution button](docs/images/v1.1.9-auto-build.jpg)
+
+*Scroll down inside Auto Build to see the storage, **Ignore forge bonuses** and
+paid transformation choices immediately above **Auto-build Gear + Skills**.
+That wide button starts the combined workflow after confirmation. The two
+**Advanced** buttons below deliberately change only gear or only skills; they
+are not the main combined action. No build was applied to take these pictures.*
 
 ### 2. Read what the hero can actually use
 
@@ -181,6 +214,14 @@ Open **BULK OPEN**, choose equipment or rune boxes and their quality filters,
 and select the equipment reward destination. The quality filter chooses which
 boxes to open, not what random reward quality the game must generate.
 
+![v1.1.9 Bulk Open destination, sale, box and quality controls](docs/images/v1.1.9-bulk-open.jpg)
+
+*First choose **Inventory**, **Warehouse** or **Vault + Sell** in the destination
+row. The two large opening buttons below show equipment/rune box counts; the
+quality filters are underneath. The red **Sell all Warehouse gear (Vault
+excluded)** button is a separate cleanup action, not the box-open button.
+The pictured **Vault + Sell** means keep Vault-accepted gear and sell the rest.*
+
 - **Inventory:** leave opened equipment in the bag.
 - **Warehouse/Vault:** use the game's native routing rules; selecting storage
   does not guarantee every item goes to Vault.
@@ -191,8 +232,9 @@ boxes to open, not what random reward quality the game must generate.
   as each sale is verified, before continuing.
 
 The default requires a second confirmation click. **Skip confirm** removes
-that extra click for box opening, so leave it off until the selected filters
-and destination are what you want. Batch work checks each item and can stop
+that extra click only for non-selling box opening; selling still requires two
+clicks. Leave it off until the selected filters and destination are what you
+want. Batch work checks each item and can stop
 between items; it does not blindly keep retrying an uncertain result. Sales
 already completed are not reversed by cancellation.
 
@@ -202,6 +244,14 @@ and equipped gear; unsellable/locked items are skipped. It is not a command to
 empty every storage system.
 
 ## Forge and Mythic: separate from choosing a build
+
+![v1.1.9 Forge one-level, max-equipped and Mythic check controls](docs/images/v1.1.9-forge.jpg)
+
+*On **Forge**, the upper two large buttons are **Find best target + apply one
+level** and **Max all equipped gear (+5 first)**. Scroll down for the purple
+**Check all Mythic candidates (no consumption)** button. Its first click only
+checks candidates; a subsequent confirmed batch can consume items and resources.
+It is separate from the two equipped-gear upgrades above.*
 
 - **Find best target + apply one level:** compare the selected hero's equipped
   items at their current Forge level and predicted next level, then spend the

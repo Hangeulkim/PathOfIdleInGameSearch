@@ -27,6 +27,13 @@ Runtime tests remain opt-in with `PATHOFIDLE_RUNTIME_TEST`; their existing
 v1.1.8 protocol is retained for saved runners. It is independent of the public
 1.1.9 plugin version. These hooks are absent from the production DLL.
 
-Images in `docs/images` are historical early UI captures. They are deliberately
-not embedded in the current README because their layout and set display are
-outdated. Do not substitute another project's screenshots.
+The `docs/images/v1.1.9-*.jpg` images are real captures of the installed public
+v1.1.9 DLL, taken on 2026-09-06. They are placed next to the matching README
+instructions. Capturing used only search, hero selection, tabs and scrolling;
+no Auto Build, sale or upgrade was executed. Their saved settings are examples,
+not defaults or evidence of a newly tested build result. Older unversioned
+images are historical and must not replace current UI examples.
+
+Documentation-only photo updates do not change the published v1.1.9 binaries,
+release tag or asset checksums. New packages must include images referenced by
+the bundled READMEs. Do not substitute another project's screenshots.

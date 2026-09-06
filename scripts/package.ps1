@@ -23,6 +23,7 @@ $files = @('install.bat','uninstall.bat','README.md','README.ko.md','README.zh-C
 $files += Get-ChildItem -LiteralPath (Join-Path $root 'source') -File | Where-Object Extension -in '.cs','.csproj' | ForEach-Object { 'source\' + $_.Name }
 $files += Get-ChildItem -LiteralPath $PSScriptRoot -File | Where-Object Extension -in '.ps1','.json','.md' | ForEach-Object { 'scripts\' + $_.Name }
 $files += @('scripts\EffectScorerAudit\EffectScorerAudit.csproj','scripts\EffectScorerAudit\Program.cs','scripts\regression-receipts\2026-09-06-healer-equip.json')
+$files += @('docs\images\v1.1.9-search.jpg','docs\images\v1.1.9-auto-build-theme.jpg','docs\images\v1.1.9-auto-build.jpg','docs\images\v1.1.9-bulk-open.jpg','docs\images\v1.1.9-forge.jpg')
 Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
 try {

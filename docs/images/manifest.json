@@ -1,0 +1,16 @@
+{
+  "version": "1.1.9",
+  "capturedOn": "2026-09-06",
+  "pluginSha256": "6B6D1211060B612A0A97CA7893DAC0E2B4C73384613B0110D55B7DC86D46F43C",
+  "source": "Actual installed game window, not generated mockups",
+  "scope": "Search, hero selection, navigation and scrolling only. No build, sale or upgrade executed for these images.",
+  "settings": "Saved examples from the current save, not recommended defaults",
+  "steamVisibility": "Unlisted: visible through the Discussion, not listed in the Community Hub",
+  "images": [
+    { "file": "v1.1.9-search.jpg", "section": "Item Search", "steam": "https://steamcommunity.com/sharedfiles/filedetails/?id=3796853071" },
+    { "file": "v1.1.9-auto-build-theme.jpg", "section": "Auto Build settings", "steam": "https://steamcommunity.com/sharedfiles/filedetails/?id=3796853585" },
+    { "file": "v1.1.9-auto-build.jpg", "section": "Auto Build execution options", "steam": "https://steamcommunity.com/sharedfiles/filedetails/?id=3796853607" },
+    { "file": "v1.1.9-bulk-open.jpg", "section": "Bulk Open", "steam": "https://steamcommunity.com/sharedfiles/filedetails/?id=3796853626" },
+    { "file": "v1.1.9-forge.jpg", "section": "Forge and Mythic", "steam": "https://steamcommunity.com/sharedfiles/filedetails/?id=3796853647" }
+  ]
+}

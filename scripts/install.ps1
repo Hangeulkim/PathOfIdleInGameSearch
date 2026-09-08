@@ -6,9 +6,10 @@ $ProgressPreference = 'SilentlyContinue'
 $ProjectDirectory = Split-Path -Parent $PSScriptRoot
 $PluginSource = Join-Path $ProjectDirectory 'payload\PathOfIdleInGameSearch.dll'
 $BepInExConfigSource = Join-Path $ProjectDirectory 'payload\BepInEx.cfg'
-$BepInExUrl = 'https://builds.bepinex.dev/projects/bepinex_be/760/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.760%2Ba1afbfb.zip'
+$BepInExArchiveSource = Join-Path $ProjectDirectory 'payload\BepInEx-runtime.zip'
 $BepInExSha256 = '9753B825578A3C3A31CC10067CD45A44A7BF56D3C34C4679E24D6ADFD0FBA8EA'
-$PluginSha256 = '6B6D1211060B612A0A97CA7893DAC0E2B4C73384613B0110D55B7DC86D46F43C'
+$BepInExBytes = 34324795
+$PluginSha256 = '6600DBE47E170D7DD0DD816027E7B3EEEC146D33176428F765D68B4523E9B75E'
 . (Join-Path $PSScriptRoot 'find-game.ps1')
 . (Join-Path $PSScriptRoot 'sha256.ps1')
 if (-not $GameDirectory) { $GameDirectory = Find-PathOfIdleGameDirectory }
@@ -48,17 +49,22 @@ if (-not $HasCore) {
     $ExtractDirectory = Join-Path $TempDirectory 'extracted'
     New-Item -ItemType Directory -Path $ExtractDirectory -Force | Out-Null
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Write-Host 'BepInEx 공식 고정 버전을 받는 중...'
-        Invoke-WebRequest -UseBasicParsing -Uri $BepInExUrl -OutFile $ArchivePath
-        if ((Get-ModSha256 $ArchivePath) -ne $BepInExSha256) {
-            throw 'BepInEx 다운로드 무결성 검사에 실패했습니다.'
+        if (-not (Test-Path -LiteralPath $BepInExArchiveSource -PathType Leaf)) {
+            throw 'Bundled BepInEx runtime is missing. Download the complete release ZIP and extract every file.'
         }
+        Copy-Item -LiteralPath $BepInExArchiveSource -Destination $ArchivePath
+        if ((Get-Item -LiteralPath $ArchivePath).Length -ne $BepInExBytes -or (Get-ModSha256 $ArchivePath) -ne $BepInExSha256) {
+            throw 'Bundled BepInEx runtime is incomplete or corrupted. Download the complete release ZIP again. Nothing was installed.'
+        }
+        Write-Host 'Using bundled BepInEx runtime. No installer network download is required.'
         Expand-Archive -LiteralPath $ArchivePath -DestinationPath $ExtractDirectory -Force
 
         foreach ($name in @('BepInEx', 'dotnet', 'doorstop_config.ini', 'winhttp.dll', '.doorstop_version')) {
             $source = Join-Path $ExtractDirectory $name
             if (-not (Test-Path -LiteralPath $source)) { throw "BepInEx 압축에 필요한 파일이 없습니다: $name" }
+        }
+        foreach ($name in @('BepInEx', 'dotnet', 'doorstop_config.ini', 'winhttp.dll', '.doorstop_version')) {
+            $source = Join-Path $ExtractDirectory $name
             Copy-Item -LiteralPath $source -Destination $GameDirectory -Recurse -Force
         }
         Write-Host 'BepInEx를 설치했습니다.'
@@ -89,5 +95,5 @@ if ((Get-ModSha256 $PluginDestination) -ne $PluginSha256) {
 }
 
 Write-Host "게임 위치: $GameDirectory"
-Write-Host 'Path of Idle In-Game Search 1.1.9 설치 완료.'
+Write-Host 'Path of Idle In-Game Search 1.1.10 설치 완료.'
 Write-Host '처음 실행은 BepInEx 준비 때문에 평소보다 오래 걸릴 수 있습니다.'

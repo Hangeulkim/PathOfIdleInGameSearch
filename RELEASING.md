@@ -12,10 +12,24 @@ checksums before publishing.
    `-DotNet`.
 3. Run focused regressions and the effect audit. Preserve historical receipts
    and exact-save signatures; do not relabel them as newly executed tests.
-4. Run `scripts/package.ps1`. Only allowlisted source, installer, documentation
+4. Run `scripts/package.ps1 -RuntimeArchivePath <official-runtime.zip> -RuntimeSourcePath <matching-source.zip> -RuntimeNoticesPath <dependency-notices.zip>`
+   using the exact checksums/provenance in `THIRD-PARTY.md`. Extracted player ZIPs
+   already contain these inputs under `payload`, which are the default paths.
+   Only allowlisted source, installer, documentation
    and production payload files enter the ZIP. No saves, personal settings,
    game binaries, runtime requests, debug-enabled DLL or PDB are distributed.
-5. Extract and test the actual ZIP: checksum mismatch, incomplete BepInEx,
+5. Run `scripts/test-launchers.ps1` on source and with `-PackagePath` on the
+   actual ZIP. This starts CMD/BAT in hidden processes, not just PowerShell:
+   CP437/949/65001, spaces and Unicode/symbol paths, normal/failure/missing
+   scripts, exact exit codes, then actual installer/uninstaller integration.
+   `scripts/publish-release.ps1` requires this check before publishing.
+   Run `scripts/test-launchers.ps1 -PackagePath <zip> -IncludeFreshRuntime` for
+   the actual bundled official runtime checksum and extraction into an isolated
+   directory, plus corrupt/missing runtime rejection. The guarded publisher
+   requires this check. No installer network download is needed. These tests do not launch
+   the game or validate its runtime UI; report that limitation explicitly when
+   the change is installer-only and interactive testing is not performed.
+   Also extract and test the actual ZIP: checksum mismatch, incomplete BepInEx,
    game-running rejection, existing settings preservation and real game load.
    A compile or process launch alone does not establish functional correctness.
 6. Commit source, payload, installer hash and documentation together. Push only
@@ -25,7 +39,7 @@ checksums before publishing.
 
 Runtime tests remain opt-in with `PATHOFIDLE_RUNTIME_TEST`; their existing
 v1.1.8 protocol is retained for saved runners. It is independent of the public
-1.1.9 plugin version. These hooks are absent from the production DLL.
+plugin version. These hooks are absent from the production DLL.
 
 The `docs/images/v1.1.9-*.jpg` images are real captures of the installed public
 v1.1.9 DLL, taken on 2026-09-06. They are placed next to the matching README

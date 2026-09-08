@@ -10,11 +10,13 @@ This is the standalone **Hangeulkim/PathOfIdleInGameSearch** project. **1.1.9** 
 
 ## Install or update
 
-1. Download `PathOfIdleInGameSearch-v1.1.9.zip` from Releases and extract it completely.
+**1.1.10 fixes the Windows installer launch error** (`all.ps1` / `is not recognized`). If an older installer fails, download the new ZIP and extract it into a fresh folder. This update does not change the build algorithm; the v1.1.9 screenshots below still show the same interface.
+
+1. Download `PathOfIdleInGameSearch-v1.1.10.zip` from Releases and extract it completely.
 2. Close Path of Idle, then run `install.bat`.
 3. Start the game and press **F3** or **Ctrl+F**.
 
-The installer finds the Steam game directory, verifies the mod DLL, and preserves existing mod settings. If BepInEx is missing, it downloads and verifies a pinned official BepInEx 6 IL2CPP x64 build. BepInEx and game binaries are not bundled. Existing BepInEx users can instead copy the separate release DLL into `BepInEx/plugins` while the game is closed.
+The installer finds the Steam game directory, verifies the mod DLL, and preserves existing mod settings. If BepInEx is missing, it verifies and installs the unmodified pinned official BepInEx 6 IL2CPP x64 archive included in the player ZIP; no separate installer download is needed. The matching BepInEx source and license are included too. Game binaries are not bundled. Existing BepInEx users can instead copy the separate release DLL into `BepInEx/plugins` while the game is closed.
 
 Back up your save before automation, particularly after game updates. Resetting skills, transformations and upgrades use normal game resources. **Sales and failed Mythic refinements are irreversible.**
 

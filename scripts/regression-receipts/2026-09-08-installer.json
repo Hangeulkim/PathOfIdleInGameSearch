@@ -1,0 +1,39 @@
+{
+  "date": "2026-09-08",
+  "version": "1.1.10",
+  "scope": "Windows installer entrypoints and player release package; no game/runtime execution",
+  "baseline": {
+    "release": "v1.1.9",
+    "zipSha256": "61EDC74A06D607667DEF85B3745EE5EE95F481DC0C75830B9FA17CAA2A6F331C",
+    "reproduced": "Exact public install.bat fails under CP949 and CP65001; CP65001 includes the reported all.ps1/is-not-recognized output. Earlier tests bypassed BAT."
+  },
+  "verifiedArtifact": {
+    "zipSha256": "1F4970EA1329D8BEC26971F744330599860F2F13762582ED148251409D190E97",
+    "zipBytes": 37084551,
+    "dllSha256": "6600DBE47E170D7DD0DD816027E7B3EEEC146D33176428F765D68B4523E9B75E",
+    "runtimeSha256": "9753B825578A3C3A31CC10067CD45A44A7BF56D3C34C4679E24D6ADFD0FBA8EA"
+  },
+  "passed": [
+    "72 source BAT cases: install/uninstall, direct/CALL, CP437/949/65001, spaces/Korean/ampersand/parentheses, success/failure/missing-script, argument and exit propagation",
+    "72 extracted final ZIP BAT cases and actual BAT-to-PowerShell integration",
+    "Read-only Steam game directory discovery",
+    "Existing runtime installation, payload hash, uninstall and settings/other-mod preservation",
+    "First-time bundled official BepInEx verification/extraction and plugin installation in an isolated fixture",
+    "Missing/corrupt bundled runtime rejected with no runtime or plugin files installed",
+    "Invalid game directory, tampered DLL and partial existing BepInEx rejected",
+    "LF-only source launchers normalized to functional CRLF by the packager",
+    "Runtime, corresponding source, dependency notices/source, license and five example images included"
+  ],
+  "limits": [
+    "Fixtures use non-executable game placeholders; no game window or runtime DLL was executed",
+    "No new Auto Build, equipment, combat or other game-logic regression run is claimed",
+    "Build-server downloads failed repeatedly; the final installer uses the bundled official GitHub build archive, verified against the unchanged original hash",
+    "This receipt is for the exact local candidate ZIP above; public download verification is performed after publishing"
+  ],
+  "repeat": [
+    "powershell -NoProfile -File scripts/test-launchers.ps1",
+    "powershell -NoProfile -File scripts/test-launchers.ps1 -PackagePath artifacts/PathOfIdleInGameSearch-v1.1.10.zip -IncludeFreshRuntime",
+    "powershell -NoProfile -File scripts/test-install-package.ps1 -PackagePath artifacts/PathOfIdleInGameSearch-v1.1.10.zip"
+  ],
+  "releaseGate": "scripts/publish-release.ps1 requires exact-ZIP launcher, first-install and package failure-path tests"
+}

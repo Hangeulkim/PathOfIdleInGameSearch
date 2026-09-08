@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.10
+
+- Fixes #1: Windows parsed the UTF-8/LF batch launchers incorrectly, producing `all.ps1` / `is not recognized` errors before installation. Both launchers now use ASCII commands and CRLF, without changing the active code page.
+- Preserves delegated installer/uninstaller exit codes, reports missing scripts clearly, and forwards an explicitly provided game directory safely.
+- Enforces Windows batch encoding/line endings during packaging as well as Git checkout. Tests the exact source and extracted ZIP BAT files across CP437/949/65001, spaces and Unicode/symbol paths, and normal/error/missing-script paths.
+- Tests the actual BAT-to-PowerShell install/uninstall path against an isolated directory, including payload checksums and settings/other-mod preservation. Previous v1.1.9 tests invoked PowerShell directly and missed the launcher; this closes that verification gap.
+- Includes the unmodified pinned official BepInEx runtime in the player ZIP, together with its corresponding source and license. First installation no longer depends on the build server returning a complete download. The existing SHA-256 is unchanged and is checked before extraction; missing/corrupt runtime archives fail without installing runtime/plugin files.
+- Includes the illustrated feature instructions. No Auto Build, scoring, skill, storage or upgrade logic changed; the plugin version only was bumped.
+
 ## 1.1.9
 
 - Publishes the latest in-game mod in its standalone repository, `Hangeulkim/PathOfIdleInGameSearch`. Releases 1.1.6–1.1.8 were mistakenly published in a different repository; install 1.1.9 from this project's Releases page.

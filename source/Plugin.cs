@@ -30,7 +30,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string PluginGuid = "local.pathofidle.ingame-search";
     public const string PluginName = "Path of Idle In-Game Search";
-    public const string PluginVersion = "1.1.9";
+    public const string PluginVersion = "1.1.10";
 
 #if PATHOFIDLE_DIAGNOSTICS
     private static ManualLogSource DiagnosticsLogger { get; set; } = null!;

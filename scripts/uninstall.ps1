@@ -1,9 +1,11 @@
 ﻿[CmdletBinding()]
-param()
+param([string]$GameDirectory)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'find-game.ps1')
-$GameDirectory = Find-PathOfIdleGameDirectory
+if (-not $GameDirectory) { $GameDirectory = Find-PathOfIdleGameDirectory }
+if (-not (Test-PathOfIdleDirectory $GameDirectory)) { throw 'Invalid Path of Idle game directory.' }
+$GameDirectory = [IO.Path]::GetFullPath($GameDirectory)
 $PluginDestination = Join-Path $GameDirectory 'BepInEx\plugins\PathOfIdleInGameSearch.dll'
 
 if (Get-Process -Name PathOfIdle -ErrorAction SilentlyContinue) {
@@ -16,4 +18,3 @@ if (Test-Path -LiteralPath $PluginDestination -PathType Leaf) {
 else {
     Write-Host '설치된 모드 DLL이 없습니다.'
 }
-

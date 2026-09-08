@@ -1,15 +1,23 @@
 @echo off
-setlocal
-chcp 65001 >nul
+setlocal EnableExtensions DisableDelayedExpansion
 title Path of Idle In-Game Search Uninstaller
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\uninstall.ps1"
-if errorlevel 1 (
-  echo.
-  echo 제거하지 못했습니다. 위 오류 내용을 확인해 주세요.
-) else (
-  echo.
-  echo 모드 DLL을 제거했습니다.
-)
+if not exist "%~dp0scripts\uninstall.ps1" goto missing
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\uninstall.ps1" %*
+set "uninstallExit=%errorlevel%"
 echo.
-pause
+if not "%uninstallExit%"=="0" goto failed
+echo Mod removal completed. Settings and other mods were preserved.
+goto done
 
+:missing
+set "uninstallExit=2"
+echo Uninstaller files are missing. Extract the entire release ZIP and try again.
+goto done
+
+:failed
+echo Removal failed. Please read the error above.
+
+:done
+echo.
+if not defined PATHOFIDLE_INSTALL_NO_PAUSE pause
+exit /b %uninstallExit%

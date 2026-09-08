@@ -10,11 +10,13 @@
 
 ## 安装与更新
 
-1. 下载并完整解压 `PathOfIdleInGameSearch-v1.1.9.zip`。
+**1.1.10 修复 Windows 安装器启动错误**（`all.ps1` / `is not recognized`）。请重新下载 ZIP 并完整解压到新文件夹。本次未更改自动搭配算法，下方 v1.1.9 截图中的界面仍相同。
+
+1. 下载并完整解压 `PathOfIdleInGameSearch-v1.1.10.zip`。
 2. 关闭游戏，运行 `install.bat`。
 3. 启动游戏，按 **F3** 或 **Ctrl+F**。
 
-安装程序验证 SHA-256 并保留现有设置。仅当缺少 BepInEx 时才下载并验证固定的官方 BepInEx 6 IL2CPP x64。已有 BepInEx 的用户也可将单独下载的 DLL 放入 `BepInEx/plugins`。
+安装程序验证 SHA-256 并保留现有设置。仅当缺少 BepInEx 时才验证并安装 ZIP 内附的固定官方 BepInEx 6 IL2CPP x64 原版，无需在安装过程中另行下载。包内同时提供对应源码和许可证，不包含游戏文件。已有 BepInEx 的用户也可将单独下载的 DLL 放入 `BepInEx/plugins`。
 
 ## 功能与示例
 

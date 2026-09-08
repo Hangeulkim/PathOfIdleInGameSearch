@@ -25,5 +25,7 @@ foreach ($file in @($zip,$dll,$sums,$NotesFile)) { if (-not (Test-Path -LiteralP
 $sumText = [IO.File]::ReadAllText($sums)
 foreach ($file in @($zip,$dll)) { if (-not $sumText.Contains("$(Get-ModSha256 $file)  $([IO.Path]::GetFileName($file))")) { throw 'Release asset checksum mismatch' } }
 if ((Get-ModSha256 $dll) -ne (Get-ModSha256 (Join-Path $root 'payload\PathOfIdleInGameSearch.dll'))) { throw 'Asset does not match committed payload' }
+& (Join-Path $PSScriptRoot 'test-launchers.ps1') -PackagePath $zip -IncludeFreshRuntime
+& (Join-Path $PSScriptRoot 'test-install-package.ps1') -PackagePath $zip
 & gh release create "v$version" $zip $dll $sums --repo $repo --target $commit --title "Path of Idle In-Game Search v$version" --notes-file $NotesFile --latest
 if ($LASTEXITCODE) { throw 'Release publication failed; inspect before retrying' }
